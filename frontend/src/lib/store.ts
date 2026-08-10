@@ -38,10 +38,6 @@ interface GraphState {
 }
 
 let idCounter = 0;
-function nextId() {
-  idCounter += 1;
-  return `n${Date.now().toString(36)}-${idCounter}`;
-}
 
 function slug(label: string) {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
@@ -137,8 +133,14 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
     try {
       const delta: GraphDelta = await ingestNote({
         text: trimmed,
-        nodes: s.nodes.map((n) => ({ label: n.data.label, kind: n.data.kind })),
+        nodes: s.nodes.map((n) => ({
+          id: n.id,
+          label: n.data.label,
+          kind: n.data.kind,
+        })),
         edges: s.edges.map((e) => ({
+          source_id: e.source,
+          target_id: e.target,
           source_label:
             s.nodes.find((n) => n.id === e.source)?.data.label ?? e.source,
           target_label:
@@ -150,6 +152,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       set((state) => {
         // Strip ghost nodes before merging real ones.
         const liveNodes = state.nodes.filter((n) => !n.data.ghost);
+        const byId = new Map(state.nodes.map((n) => [n.id, n] as const));
         const byLabel = new Map(
           state.nodes.map((n) => [n.data.label.toLowerCase(), n] as const)
         );
@@ -157,34 +160,57 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
         const newNodes: WeaveFlowNode[] = [];
         const newEdges: Edge[] = [];
 
-        // Resolve a label to a node id, tracking nodes added in this pass.
+        // Generate a stable `node-{slug}` id, deduping against existing ids.
+        const usedIds = new Set(state.nodes.map((n) => n.id));
+        const freshNodeId = (label: string): string => {
+          const base = `node-${slug(label) || "node"}`;
+          if (!usedIds.has(base)) {
+            usedIds.add(base);
+            return base;
+          }
+          let i = 2;
+          while (usedIds.has(`${base}-${i}`)) i += 1;
+          const id = `${base}-${i}`;
+          usedIds.add(id);
+          return id;
+        };
+
+        // Resolve a node to an id: prefer the backend-provided id, then the
+        // existing label, then create fresh. Tracks nodes added in this pass.
         const resolveId = (
+          id: string | undefined,
           label: string,
           kind: string
         ): { id: string; isNew: boolean } => {
+          if (id) {
+            const existing = byId.get(id);
+            if (existing) return { id: existing.id, isNew: false };
+          }
           const key = label.toLowerCase();
           const existing = byLabel.get(key);
           if (existing) return { id: existing.id, isNew: false };
+          const nodeId = id ?? freshNodeId(label);
           const node: WeaveFlowNode = {
-            id: nextId(),
+            id: nodeId,
             type: "weave",
             position: { x: 0, y: 0 },
             data: { label, kind, fresh: true },
           };
+          byId.set(nodeId, node);
           byLabel.set(key, node);
           newNodes.push(node);
-          return { id: node.id, isNew: true };
+          return { id: nodeId, isNew: true };
         };
 
         // Create nodes first so every edge endpoint exists.
-        for (const n of delta.nodes) resolveId(n.label, n.kind);
+        for (const n of delta.nodes) resolveId(n.id, n.label, n.kind);
 
         // Count how many new nodes attach to each parent for radial layout.
         const parentChildCount = new Map<string, number>();
 
         for (const e of delta.edges) {
-          const src = resolveId(e.source_label, "concept");
-          const tgt = resolveId(e.target_label, "concept");
+          const src = resolveId(e.source_id, e.source_label, "concept");
+          const tgt = resolveId(e.target_id, e.target_label, "concept");
           const edgeId = `${src.id}->${tgt.id}:${slug(e.relation)}`;
           const dup = [...state.edges, ...newEdges].some(
             (x) => x.id === edgeId

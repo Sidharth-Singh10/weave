@@ -151,6 +151,7 @@ mod tests {
 
     fn node(label: &str) -> GraphNode {
         GraphNode {
+            id: None,
             label: label.to_string(),
             kind: String::new(),
         }
@@ -158,6 +159,9 @@ mod tests {
 
     fn edge(src: &str, tgt: &str, rel: &str) -> GraphEdge {
         GraphEdge {
+            id: None,
+            source_id: None,
+            target_id: None,
             source_label: src.to_string(),
             target_label: tgt.to_string(),
             relation: rel.to_string(),

@@ -1,9 +1,13 @@
 export interface ApiNode {
+  id?: string;
   label: string;
   kind: string;
 }
 
 export interface ApiEdge {
+  id?: string;
+  source_id?: string;
+  target_id?: string;
   source_label: string;
   target_label: string;
   relation: string;

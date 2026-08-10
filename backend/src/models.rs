@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
+    #[serde(default)]
+    pub id: Option<String>,
     pub label: String,
     #[serde(default)]
     pub kind: String,
@@ -9,6 +11,12 @@ pub struct GraphNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub target_id: Option<String>,
     pub source_label: String,
     pub target_label: String,
     pub relation: String,
