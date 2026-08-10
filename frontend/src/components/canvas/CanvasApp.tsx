@@ -11,7 +11,8 @@ import {
   ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useGraphStore, type WeaveFlowNode } from "@/lib/store";
+import { useGraphStore } from "@/lib/store";
+import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
 

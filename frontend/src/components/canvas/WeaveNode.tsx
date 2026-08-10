@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { motion } from "motion/react";
-import { useGraphStore, type WeaveFlowNode } from "@/lib/store";
+import { useGraphStore } from "@/lib/store";
+import type { WeaveFlowNode } from "@/lib/graph-types";
 
 export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
   const renameNode = useGraphStore((s) => s.renameNode);
