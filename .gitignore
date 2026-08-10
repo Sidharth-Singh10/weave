@@ -1,0 +1,24 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Rust
+target/
+**/*.rs.bk
+
+# Env
+.env
+.env*.local
+
+# Logs
+*.log
+npm-debug.log*
+.DS_Store
+
+# Playwright MCP test artifacts
+.playwright-mcp/
+step0-baseline.png
