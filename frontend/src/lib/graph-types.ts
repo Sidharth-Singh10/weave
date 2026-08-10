@@ -35,3 +35,29 @@ export interface WeaveNodeData extends Record<string, unknown> {
 }
 
 export type WeaveFlowNode = Node<WeaveNodeData, "weave">;
+
+/** Pure knowledge: what exists. No visual or position data. */
+export interface KnowledgeNode {
+  id: string;
+  label: string;
+  kind: string;
+}
+
+/** Pure knowledge: a relationship between two knowledge nodes by stable id. */
+export interface KnowledgeEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+}
+
+export interface XYPosition {
+  x: number;
+  y: number;
+}
+
+/** Transient "Weaving..." indicator shown while an ingest request is in flight. */
+export interface GhostNode {
+  id: string;
+  position: XYPosition;
+}

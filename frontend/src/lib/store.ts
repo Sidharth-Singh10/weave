@@ -1,25 +1,38 @@
 "use client";
 
 import { create } from "zustand";
-import {
-  applyEdgeChanges,
-  applyNodeChanges,
-  type Connection,
-  type Edge,
-  type EdgeChange,
-  type NodeChange,
+import type {
+  Connection,
+  EdgeChange,
+  NodeChange,
 } from "@xyflow/react";
 import { ingestNote } from "./api";
 import { applyGraphDelta } from "./graph-ops";
-import type { GraphDelta, WeaveFlowNode } from "./graph-types";
+import type {
+  GhostNode,
+  GraphDelta,
+  KnowledgeEdge,
+  KnowledgeNode,
+  WeaveFlowNode,
+  XYPosition,
+} from "./graph-types";
 
 export type GraphStatus = "idle" | "thinking" | "error";
 
 interface GraphState {
-  nodes: WeaveFlowNode[];
-  edges: Edge[];
+  /** Source of truth: the knowledge graph. */
+  knowledgeNodes: KnowledgeNode[];
+  knowledgeEdges: KnowledgeEdge[];
+  /** Visual metadata: persisted node positions, keyed by node id. */
+  positions: Record<string, XYPosition>;
+  /** Node ids that should render the "fresh" pulse. */
+  freshIds: string[];
+  /** Transient "Weaving..." indicator while a request is in flight. */
+  ghostNode: GhostNode | null;
+
   status: GraphStatus;
   error: string | null;
+
   onNodesChange: (changes: NodeChange<WeaveFlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (conn: Connection) => void;
@@ -31,38 +44,80 @@ interface GraphState {
 let idCounter = 0;
 
 export const useGraphStore = create<GraphState>()((set, get) => ({
-  nodes: [],
-  edges: [],
+  knowledgeNodes: [],
+  knowledgeEdges: [],
+  positions: {},
+  freshIds: [],
+  ghostNode: null,
   status: "idle",
   error: null,
 
   onNodesChange: (changes) =>
-    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) })),
+    set((s) => {
+      const removedIds: string[] = [];
+      const positionUpdates: { id: string; position: XYPosition }[] = [];
+
+      for (const c of changes) {
+        if (c.type === "remove") {
+          removedIds.push(c.id);
+        } else if (c.type === "position" && c.position) {
+          positionUpdates.push({ id: c.id, position: c.position });
+        }
+      }
+
+      let knowledgeNodes = s.knowledgeNodes;
+      let knowledgeEdges = s.knowledgeEdges;
+      if (removedIds.length > 0) {
+        const removed = new Set(removedIds);
+        knowledgeNodes = s.knowledgeNodes.filter((n) => !removed.has(n.id));
+        knowledgeEdges = s.knowledgeEdges.filter(
+          (e) => !removed.has(e.source) && !removed.has(e.target)
+        );
+      }
+
+      let positions = s.positions;
+      if (positionUpdates.length > 0) {
+        positions = { ...s.positions };
+        for (const u of positionUpdates) {
+          positions[u.id] = u.position;
+        }
+      }
+
+      return { knowledgeNodes, knowledgeEdges, positions };
+    }),
 
   onEdgesChange: (changes) =>
-    set((s) => ({ edges: applyEdgeChanges(changes, s.edges) })),
+    set((s) => {
+      const removedIds = changes
+        .filter((c) => c.type === "remove")
+        .map((c) => c.id);
+      if (removedIds.length === 0) return s;
+      const removed = new Set(removedIds);
+      return {
+        knowledgeEdges: s.knowledgeEdges.filter((e) => !removed.has(e.id)),
+      };
+    }),
 
   onConnect: (conn) =>
     set((s) => {
       if (!conn.source || !conn.target) return s;
-      const exists = s.edges.some(
+      const exists = s.knowledgeEdges.some(
         (e) => e.source === conn.source && e.target === conn.target
       );
       if (exists) return s;
-      const edge: Edge = {
+      const edge: KnowledgeEdge = {
         id: `${conn.source}->${conn.target}:${idCounter++}`,
         source: conn.source,
         target: conn.target,
-        label: "related to",
-        type: "default",
+        relation: "related to",
       };
-      return { edges: [...s.edges, edge] };
+      return { knowledgeEdges: [...s.knowledgeEdges, edge] };
     }),
 
   renameNode: (id, label) =>
     set((s) => ({
-      nodes: s.nodes.map((n) =>
-        n.id === id ? { ...n, data: { ...n.data, label } } : n
+      knowledgeNodes: s.knowledgeNodes.map((n) =>
+        n.id === id ? { ...n, label } : n
       ),
     })),
 
@@ -76,77 +131,69 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
     // Place a ghost node near the centroid so the canvas shows activity.
     const ghostId = `ghost-${Date.now()}`;
-    const cur = get().nodes;
+    const cur = get().knowledgeNodes;
+    const pos = get().positions;
     let gx = 0;
     let gy = 0;
     if (cur.length > 0) {
-      gx = cur.reduce((s, n) => s + n.position.x, 0) / cur.length + 160;
-      gy = cur.reduce((s, n) => s + n.position.y, 0) / cur.length + 40;
+      gx =
+        cur.reduce((sum, n) => sum + (pos[n.id]?.x ?? 0), 0) / cur.length + 160;
+      gy =
+        cur.reduce((sum, n) => sum + (pos[n.id]?.y ?? 0), 0) / cur.length + 40;
     }
-    set((s) => ({
-      nodes: [
-        ...s.nodes,
-        {
-          id: ghostId,
-          type: "weave",
-          position: { x: gx, y: gy },
-          data: { label: "Weaving...", kind: "", fresh: false, ghost: true },
-          selectable: false,
-          draggable: false,
-        },
-      ],
-    }));
+    set({
+      ghostNode: { id: ghostId, position: { x: gx, y: gy } },
+    });
 
     const s = get();
 
     try {
       const delta: GraphDelta = await ingestNote({
         text: trimmed,
-        nodes: s.nodes.map((n) => ({
+        nodes: s.knowledgeNodes.map((n) => ({
           id: n.id,
-          label: n.data.label,
-          kind: n.data.kind,
+          label: n.label,
+          kind: n.kind,
         })),
-        edges: s.edges.map((e) => ({
+        edges: s.knowledgeEdges.map((e) => ({
           source_id: e.source,
           target_id: e.target,
           source_label:
-            s.nodes.find((n) => n.id === e.source)?.data.label ?? e.source,
+            s.knowledgeNodes.find((n) => n.id === e.source)?.label ?? e.source,
           target_label:
-            s.nodes.find((n) => n.id === e.target)?.data.label ?? e.target,
-          relation: typeof e.label === "string" ? e.label : "related to",
+            s.knowledgeNodes.find((n) => n.id === e.target)?.label ?? e.target,
+          relation: e.relation,
         })),
       });
 
       set((state) => {
-        const liveNodes = state.nodes.filter((n) => !n.data.ghost);
-        const { nodes: nextNodes, edges: nextEdges } = applyGraphDelta(
-          liveNodes,
-          state.edges,
-          delta
+        const result = applyGraphDelta(
+          state.knowledgeNodes,
+          state.knowledgeEdges,
+          delta,
+          state.positions
         );
 
         return {
-          nodes: nextNodes,
-          edges: nextEdges,
+          knowledgeNodes: result.nodes,
+          knowledgeEdges: result.edges,
+          positions: { ...state.positions, ...result.positions },
+          freshIds: result.newIds,
+          ghostNode: null,
           status: "idle" as const,
         };
       });
 
       // Clear the "fresh" pulse after the animation window.
       setTimeout(() => {
-        set((state) => ({
-          nodes: state.nodes.map((n) =>
-            n.data.fresh ? { ...n, data: { ...n.data, fresh: false } } : n
-          ),
-        }));
+        set({ freshIds: [] });
       }, 1600);
     } catch (err) {
-      set((state) => ({
-        nodes: state.nodes.filter((n) => !n.data.ghost),
+      set({
+        ghostNode: null,
         status: "error" as const,
         error: err instanceof Error ? err.message : "Something went wrong",
-      }));
+      });
     }
   },
 }));

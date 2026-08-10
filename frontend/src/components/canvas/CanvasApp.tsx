@@ -12,6 +12,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useGraphStore } from "@/lib/store";
+import { useRenderGraph } from "@/lib/graph-projection";
 import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
@@ -19,8 +20,7 @@ import { InputDock } from "./InputDock";
 const nodeTypes = { weave: WeaveNode };
 
 function Flow() {
-  const nodes = useGraphStore((s) => s.nodes);
-  const edges = useGraphStore((s) => s.edges);
+  const { renderNodes, renderEdges } = useRenderGraph();
   const onNodesChange = useGraphStore((s) => s.onNodesChange);
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onConnect = useGraphStore((s) => s.onConnect);
@@ -33,8 +33,8 @@ function Flow() {
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-background">
       <ReactFlow<WeaveFlowNode>
-        nodes={nodes}
-        edges={edges}
+        nodes={renderNodes}
+        edges={renderEdges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -66,7 +66,7 @@ function Flow() {
         />
       </ReactFlow>
 
-      {nodes.length === 0 && (
+      {renderNodes.length === 0 && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="text-center">
             <p className="text-lg text-muted">Your canvas is empty.</p>
