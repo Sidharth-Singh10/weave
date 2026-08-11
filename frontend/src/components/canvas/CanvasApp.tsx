@@ -16,6 +16,7 @@ import "@xyflow/react/dist/style.css";
 import { useGraphStore } from "@/lib/store";
 import { useRenderGraph } from "@/lib/graph-projection";
 import { useSemanticZoom } from "@/lib/useSemanticZoom";
+import { useSessionPersistence } from "@/lib/useSessionPersistence";
 import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
@@ -104,6 +105,7 @@ function Flow() {
 }
 
 export function CanvasApp() {
+  useSessionPersistence();
   return (
     <ReactFlowProvider>
       <Flow />

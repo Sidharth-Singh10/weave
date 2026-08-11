@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Sparkle } from "@phosphor-icons/react";
 import { useGraphStore } from "@/lib/store";
 import { useCommunityLabels } from "@/lib/useCommunityLabels";
+import { usePersistenceStatus } from "@/lib/usePersistenceStatus";
 import { TOPIC_COLORS } from "@/lib/graph-projection";
 import type { ViewType } from "@/lib/graph-types";
+import { SessionSwitcher } from "./SessionSwitcher";
 
 const VIEW_LABELS: Record<ViewType, string> = {
   default: "Default",
@@ -105,35 +107,75 @@ export function CanvasHeader() {
         </div>
       )}
 
-      <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line bg-background/80 p-0.5">
-        {VIEW_ORDER.map((v) => (
+      <div className="pointer-events-auto flex items-center gap-2">
+        <SessionSwitcher />
+        <div className="flex items-center gap-0.5 rounded-lg border border-line bg-background/80 p-0.5">
+          {VIEW_ORDER.map((v) => (
+            <button
+              key={v}
+              onClick={() => setViewConfig({ type: v })}
+              className={[
+                "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                viewConfig.type === v
+                  ? "bg-accent text-accent-ink"
+                  : "text-muted hover:text-foreground",
+              ].join(" ")}
+            >
+              {VIEW_LABELS[v]}
+            </button>
+          ))}
           <button
-            key={v}
-            onClick={() => setViewConfig({ type: v })}
+            onClick={() => void requestInsights()}
+            title="Ask AI for suggestions"
+            aria-label="Ask AI for suggestions"
             className={[
-              "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-              viewConfig.type === v
-                ? "bg-accent text-accent-ink"
-                : "text-muted hover:text-foreground",
+              "ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+              hasInsights
+                ? "bg-accent/15 text-accent"
+                : "text-faint hover:text-foreground",
             ].join(" ")}
           >
-            {VIEW_LABELS[v]}
+            <Sparkle size={12} weight={insightsLoading ? "fill" : "regular"} />
+            Suggest
           </button>
-        ))}
-        <button
-          onClick={() => void requestInsights()}
-          title="Ask AI for suggestions"
-          aria-label="Ask AI for suggestions"
-          className={[
-            "ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-            hasInsights
-              ? "bg-accent/15 text-accent"
-              : "text-faint hover:text-foreground",
-          ].join(" ")}
-        >
-          <Sparkle size={12} weight={insightsLoading ? "fill" : "regular"} />
-          Suggest
-        </button>
+        </div>
+      </div>
+
+      <QuotaBanner />
+      <RestoredSessionToast />
+    </div>
+  );
+}
+
+/** Warning shown when localStorage refuses writes (quota exceeded). */
+function QuotaBanner() {
+  const quotaExceeded = usePersistenceStatus((s) => s.quotaExceeded);
+  if (!quotaExceeded) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-full z-20 flex justify-center pt-2">
+      <div className="pointer-events-auto rounded-lg border border-amber-500/40 bg-surface px-3 py-1.5 text-xs text-amber-300 shadow-lg">
+        Storage full — the latest changes may not be saved.
+      </div>
+    </div>
+  );
+}
+
+/** Brief notice after a saved session is restored on load. */
+function RestoredSessionToast() {
+  const restoredSession = usePersistenceStatus((s) => s.restoredSession);
+  const clear = usePersistenceStatus((s) => s.setRestoredSession);
+
+  useEffect(() => {
+    if (!restoredSession) return;
+    const t = setTimeout(() => clear(null), 3500);
+    return () => clearTimeout(t);
+  }, [restoredSession, clear]);
+
+  if (!restoredSession) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-full z-20 flex justify-center pt-2">
+      <div className="pointer-events-auto rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-muted shadow-lg">
+        Restored <span className="font-medium text-foreground">{restoredSession}</span>
       </div>
     </div>
   );

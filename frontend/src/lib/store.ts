@@ -15,6 +15,8 @@ import type {
   GraphDelta,
   KnowledgeEdge,
   KnowledgeNode,
+  PersistedScene,
+  SessionMeta,
   ViewConfig,
   WeaveFlowNode,
   XYPosition,
@@ -42,6 +44,14 @@ interface GraphState {
 
   status: GraphStatus;
   error: string | null;
+
+  /** Named project sessions (managed by the persistence layer). */
+  sessions: SessionMeta[];
+  activeSessionId: string | null;
+  setSessions: (sessions: SessionMeta[]) => void;
+  setActiveSessionId: (id: string | null) => void;
+  /** Replace the graph with a saved scene (used on load/session switch). */
+  hydrateSession: (scene: PersistedScene) => void;
 
   onNodesChange: (changes: NodeChange<WeaveFlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
@@ -71,6 +81,29 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   insightsLoading: false,
   status: "idle",
   error: null,
+
+  sessions: [],
+  activeSessionId: null,
+  setSessions: (sessions) => set({ sessions }),
+  setActiveSessionId: (id) => set({ activeSessionId: id }),
+
+  hydrateSession: (scene) =>
+    set(() => ({
+      knowledgeNodes: scene.nodes,
+      knowledgeEdges: scene.edges,
+      positions: scene.positions,
+      viewConfig: {
+        type: scene.viewConfig.type,
+        semanticZoom: scene.viewConfig.semanticZoom,
+      },
+      communityLabels: scene.communityLabels,
+      freshIds: [],
+      ghostNode: null,
+      insights: null,
+      insightsLoading: false,
+      status: "idle",
+      error: null,
+    })),
 
   onNodesChange: (changes) =>
     set((s) => {

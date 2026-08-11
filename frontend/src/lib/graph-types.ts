@@ -90,3 +90,29 @@ export interface LayoutContext {
   /** nodeId -> importance (0-1). */
   importance: Record<string, number>;
 }
+
+/** Metadata for a named, auto-saved project session. */
+export interface SessionMeta {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The persistable subset of ViewConfig (transient selection is dropped). */
+export interface PersistedViewConfig {
+  type: ViewType;
+  semanticZoom: SemanticZoomLevel;
+}
+
+/** One session's serialized scene: the knowledge graph + view preferences. */
+export interface PersistedScene {
+  /** Schema version; migrate() bumps this on breaking shape changes. */
+  version: 1;
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+  positions: Record<string, XYPosition>;
+  viewConfig: PersistedViewConfig;
+  communityLabels: Record<string, string>;
+  savedAt: number;
+}
