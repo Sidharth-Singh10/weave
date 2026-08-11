@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { Sparkle } from "@phosphor-icons/react";
 import { useGraphStore } from "@/lib/store";
 import { useCommunityLabels } from "@/lib/useCommunityLabels";
 import { TOPIC_COLORS } from "@/lib/graph-projection";
@@ -19,6 +20,9 @@ export function CanvasHeader() {
   const knowledgeNodes = useGraphStore((s) => s.knowledgeNodes);
   const selectNode = useGraphStore((s) => s.selectNode);
   const setViewConfig = useGraphStore((s) => s.setViewConfig);
+  const requestInsights = useGraphStore((s) => s.requestInsights);
+  const insightsLoading = useGraphStore((s) => s.insightsLoading);
+  const hasInsights = useGraphStore((s) => s.insights !== null);
   const communities = useCommunityLabels();
 
   const isTopic = viewConfig.type === "topic";
@@ -116,6 +120,20 @@ export function CanvasHeader() {
             {VIEW_LABELS[v]}
           </button>
         ))}
+        <button
+          onClick={() => void requestInsights()}
+          title="Ask AI for suggestions"
+          aria-label="Ask AI for suggestions"
+          className={[
+            "ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+            hasInsights
+              ? "bg-accent/15 text-accent"
+              : "text-faint hover:text-foreground",
+          ].join(" ")}
+        >
+          <Sparkle size={12} weight={insightsLoading ? "fill" : "regular"} />
+          Suggest
+        </button>
       </div>
     </div>
   );

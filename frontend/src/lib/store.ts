@@ -6,7 +6,8 @@ import type {
   EdgeChange,
   NodeChange,
 } from "@xyflow/react";
-import { ingestNote } from "./api";
+import { ingestNote, organizeGraph } from "./api";
+import type { OrganizeResult } from "./api";
 import { applyGraphDelta } from "./graph-ops";
 import { computeLayoutContext, relayout } from "./layout";
 import type {
@@ -35,6 +36,9 @@ interface GraphState {
   viewConfig: ViewConfig;
   /** Community labels keyed by sorted member-id signature. */
   communityLabels: Record<string, string>;
+  /** Advisory AI analysis of the graph (optional layer). */
+  insights: OrganizeResult | null;
+  insightsLoading: boolean;
 
   status: GraphStatus;
   error: string | null;
@@ -48,6 +52,8 @@ interface GraphState {
   relayout: () => void;
   setViewConfig: (config: Partial<ViewConfig>) => void;
   setCommunityLabel: (signature: string, label: string) => void;
+  requestInsights: () => Promise<void>;
+  clearInsights: () => void;
   clearError: () => void;
 }
 
@@ -61,6 +67,8 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   ghostNode: null,
   viewConfig: { type: "default", semanticZoom: "entity" },
   communityLabels: {},
+  insights: null,
+  insightsLoading: false,
   status: "idle",
   error: null,
 
@@ -157,6 +165,29 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
   setCommunityLabel: (signature, label) =>
     set((s) => ({ communityLabels: { ...s.communityLabels, [signature]: label } })),
+
+  requestInsights: async () => {
+    const s = get();
+    if (s.insightsLoading || s.knowledgeNodes.length === 0) return;
+    set({ insightsLoading: true });
+    try {
+      const insights = await organizeGraph(
+        s.knowledgeNodes.map((n) => ({ id: n.id, label: n.label, kind: n.kind })),
+        s.knowledgeEdges.map((e) => ({
+          source_label:
+            s.knowledgeNodes.find((n) => n.id === e.source)?.label ?? e.source,
+          target_label:
+            s.knowledgeNodes.find((n) => n.id === e.target)?.label ?? e.target,
+          relation: e.relation,
+        }))
+      );
+      set({ insights, insightsLoading: false });
+    } catch {
+      set({ insights: null, insightsLoading: false });
+    }
+  },
+
+  clearInsights: () => set({ insights: null, insightsLoading: false }),
 
   submit: async (text) => {
     const trimmed = text.trim();

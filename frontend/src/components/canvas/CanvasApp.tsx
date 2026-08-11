@@ -20,6 +20,7 @@ import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
 import { CanvasHeader } from "./CanvasHeader";
+import { InsightsPanel } from "./InsightsPanel";
 
 const nodeTypes = { weave: WeaveNode };
 
@@ -96,6 +97,7 @@ function Flow() {
       )}
 
       <CanvasHeader />
+      <InsightsPanel />
       <InputDock />
     </div>
   );
