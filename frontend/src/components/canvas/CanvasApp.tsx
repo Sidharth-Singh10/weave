@@ -25,6 +25,7 @@ function Flow() {
   const onNodesChange = useGraphStore((s) => s.onNodesChange);
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onConnect = useGraphStore((s) => s.onConnect);
+  const selectNode = useGraphStore((s) => s.selectNode);
   const { fitView } = useReactFlow();
 
   const onInit = useCallback(() => {
@@ -40,6 +41,8 @@ function Flow() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => selectNode(undefined)}
         onInit={onInit}
         panOnScroll
         selectionOnDrag

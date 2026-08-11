@@ -11,16 +11,36 @@ const VIEW_LABELS: Record<ViewType, string> = {
 /** View tabs. Only functional views are shown; Topic lands in a later step. */
 const VIEW_ORDER: ViewType[] = ["default"];
 
-/** Compact overlay at the top of the canvas: brand mark + view switcher. */
+/** Compact overlay at the top of the canvas: brand mark + breadcrumb + view tabs. */
 export function CanvasHeader() {
   const viewConfig = useGraphStore((s) => s.viewConfig);
+  const knowledgeNodes = useGraphStore((s) => s.knowledgeNodes);
+  const selectNode = useGraphStore((s) => s.selectNode);
   const setViewConfig = useGraphStore((s) => s.setViewConfig);
 
+  const selectedLabel = viewConfig.selectedNodeId
+    ? knowledgeNodes.find((n) => n.id === viewConfig.selectedNodeId)?.label
+    : undefined;
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-line bg-surface/80 px-4 py-2 backdrop-blur-md">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-4 border-b border-line bg-surface/80 px-4 py-2 backdrop-blur-md">
       <span className="text-sm font-semibold tracking-tight text-foreground">
         Weave
       </span>
+
+      {selectedLabel && (
+        <div className="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-background/60 px-2.5 py-1 text-xs">
+          <button
+            onClick={() => selectNode(undefined)}
+            className="text-faint transition-colors hover:text-foreground"
+          >
+            Main Graph
+          </button>
+          <span className="text-faint">›</span>
+          <span className="truncate font-medium text-muted">{selectedLabel}</span>
+        </div>
+      )}
+
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line bg-background/80 p-0.5">
         {VIEW_ORDER.map((v) => (
           <button

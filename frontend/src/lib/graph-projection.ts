@@ -51,25 +51,66 @@ export function computeImportance(
 }
 
 /**
+ * Focused projection: the selected node plus its direct (1-hop) neighborhood,
+ * and the edges among those nodes. Reversible — knowledge is never mutated.
+ */
+function focusedView(
+  nodes: KnowledgeNode[],
+  edges: KnowledgeEdge[],
+  selectedId: string,
+  importance: Record<string, number>
+): GraphView {
+  const selected = nodes.find((n) => n.id === selectedId);
+  if (!selected) {
+    return { visibleNodes: nodes, visibleEdges: edges, importance };
+  }
+
+  const visibleIds = new Set<string>([selectedId]);
+  for (const e of edges) {
+    if (e.source === selectedId) visibleIds.add(e.target);
+    if (e.target === selectedId) visibleIds.add(e.source);
+  }
+
+  return {
+    visibleNodes: nodes.filter((n) => visibleIds.has(n.id)),
+    visibleEdges: edges.filter(
+      (e) => visibleIds.has(e.source) && visibleIds.has(e.target)
+    ),
+    importance,
+  };
+}
+
+/**
  * The view engine. Transforms the knowledge graph + a view config into the
  * set of knowledge entities that should currently be displayed. Iteration 2
  * features (importance, semantic zoom, communities, flavors) plug in here.
  *
- * Default view: identity projection — everything is visible, importance
- * derived from graph structure.
+ * Default view: identity projection; selecting a node focuses its
+ * neighborhood. Importance is always derived from the full graph so hubs
+ * stay visually prominent when focused.
  */
 export function createGraphView(
   knowledgeNodes: KnowledgeNode[],
   knowledgeEdges: KnowledgeEdge[],
   config: ViewConfig
 ): GraphView {
+  const importance = computeImportance(knowledgeNodes, knowledgeEdges);
+
   switch (config.type) {
     case "default":
     default:
+      if (config.selectedNodeId) {
+        return focusedView(
+          knowledgeNodes,
+          knowledgeEdges,
+          config.selectedNodeId,
+          importance
+        );
+      }
       return {
         visibleNodes: knowledgeNodes,
         visibleEdges: knowledgeEdges,
-        importance: computeImportance(knowledgeNodes, knowledgeEdges),
+        importance,
       };
   }
 }

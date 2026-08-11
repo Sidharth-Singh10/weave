@@ -41,6 +41,7 @@ interface GraphState {
   onConnect: (conn: Connection) => void;
   submit: (text: string) => Promise<void>;
   renameNode: (id: string, label: string) => void;
+  selectNode: (id: string | undefined) => void;
   setViewConfig: (config: Partial<ViewConfig>) => void;
   clearError: () => void;
 }
@@ -127,6 +128,9 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
     })),
 
   clearError: () => set({ error: null, status: "idle" }),
+
+  selectNode: (id) =>
+    set((s) => ({ viewConfig: { ...s.viewConfig, selectedNodeId: id } })),
 
   setViewConfig: (config) =>
     set((s) => ({ viewConfig: { ...s.viewConfig, ...config } })),
