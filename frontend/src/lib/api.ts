@@ -1,4 +1,4 @@
-import type { GraphDelta, IngestRequest } from "./graph-types";
+import type { ApiEdge, GraphDelta, IngestRequest } from "./graph-types";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_WEAVE_API_URL ?? "http://localhost:3001";
