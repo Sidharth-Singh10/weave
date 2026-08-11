@@ -38,6 +38,8 @@ export interface GraphView {
   importance: Record<string, number>;
   /** nodeId -> community id, from the full knowledge graph. */
   communities: Record<string, number>;
+  /** nodeId -> degree centrality, from the full knowledge graph. */
+  degree: Record<string, number>;
 }
 
 export interface RenderState {
@@ -54,40 +56,78 @@ export function computeImportance(
   nodes: KnowledgeNode[],
   edges: KnowledgeEdge[]
 ): Record<string, number> {
-  const degree = new Map<string, number>();
-  for (const n of nodes) degree.set(n.id, 0);
-  for (const e of edges) {
-    if (degree.has(e.source)) degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
-    if (degree.has(e.target)) degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
-  }
-  const max = Math.max(...degree.values(), 1);
+  const degree = computeDegree(nodes, edges);
+  const max = Math.max(...Object.values(degree), 1);
   const result: Record<string, number> = {};
-  for (const [id, d] of degree) {
+  for (const [id, d] of Object.entries(degree)) {
     result[id] = max > 0 ? d / max : 0.5;
   }
   return result;
 }
 
+/** Raw degree centrality: number of incident edges per node. */
+export function computeDegree(
+  nodes: KnowledgeNode[],
+  edges: KnowledgeEdge[]
+): Record<string, number> {
+  const degree: Record<string, number> = {};
+  for (const n of nodes) degree[n.id] = 0;
+  for (const e of edges) {
+    if (e.source in degree) degree[e.source] += 1;
+    if (e.target in degree) degree[e.target] += 1;
+  }
+  return degree;
+}
+
 /**
- * Focused projection: the selected node plus its direct (1-hop) neighborhood,
- * and the edges among those nodes. Reversible — knowledge is never mutated.
+ * Focused projection: the selected node plus its neighborhood within
+ * `depth` hops, and the edges among those nodes. Reversible — knowledge is
+ * never mutated. Higher depth = deeper adaptive granularity.
  */
 function focusedView(
   nodes: KnowledgeNode[],
   edges: KnowledgeEdge[],
   selectedId: string,
+  depth: number,
   importance: Record<string, number>,
-  communities: Record<string, number>
+  communities: Record<string, number>,
+  degree: Record<string, number>
 ): GraphView {
   const selected = nodes.find((n) => n.id === selectedId);
   if (!selected) {
-    return { visibleNodes: nodes, visibleEdges: edges, importance, communities };
+    return {
+      visibleNodes: nodes,
+      visibleEdges: edges,
+      importance,
+      communities,
+      degree,
+    };
   }
 
   const visibleIds = new Set<string>([selectedId]);
+  const adj = new Map<string, string[]>();
   for (const e of edges) {
-    if (e.source === selectedId) visibleIds.add(e.target);
-    if (e.target === selectedId) visibleIds.add(e.source);
+    const s = adj.get(e.source) ?? [];
+    s.push(e.target);
+    adj.set(e.source, s);
+    const t = adj.get(e.target) ?? [];
+    t.push(e.source);
+    adj.set(e.target, t);
+  }
+
+  const queue: string[] = [selectedId];
+  const dist = new Map<string, number>([[selectedId, 0]]);
+  while (queue.length > 0) {
+    const cur = queue.shift() as string;
+    const d = dist.get(cur) ?? 0;
+    if (d >= depth) continue;
+    for (const nb of adj.get(cur) ?? []) {
+      if (!dist.has(nb)) {
+        dist.set(nb, d + 1);
+        visibleIds.add(nb);
+        queue.push(nb);
+      }
+    }
   }
 
   return {
@@ -97,6 +137,7 @@ function focusedView(
     ),
     importance,
     communities,
+    degree,
   };
 }
 
@@ -111,6 +152,7 @@ function filterByImportance(
   edges: KnowledgeEdge[],
   importance: Record<string, number>,
   communities: Record<string, number>,
+  degree: Record<string, number>,
   level: SemanticZoomLevel
 ): GraphView {
   if (level === "entity" || level === "detail") {
@@ -119,6 +161,7 @@ function filterByImportance(
       visibleEdges: edges,
       importance,
       communities,
+      degree,
     };
   }
   const threshold = level === "overview" ? 0.5 : 0.25;
@@ -141,6 +184,7 @@ function filterByImportance(
     ),
     importance,
     communities,
+    degree,
   };
 }
 
@@ -163,6 +207,7 @@ export function createGraphView(
   const communities = Object.fromEntries(
     detectCommunities(knowledgeNodes, knowledgeEdges)
   );
+  const degree = computeDegree(knowledgeNodes, knowledgeEdges);
 
   switch (config.type) {
     case "default":
@@ -172,8 +217,10 @@ export function createGraphView(
           knowledgeNodes,
           knowledgeEdges,
           config.selectedNodeId,
+          config.focusDepth ?? 1,
           importance,
-          communities
+          communities,
+          degree
         );
       }
       return filterByImportance(
@@ -181,6 +228,7 @@ export function createGraphView(
         knowledgeEdges,
         importance,
         communities,
+        degree,
         config.semanticZoom
       );
   }
@@ -207,6 +255,7 @@ export function projectToRender(
       kind: n.kind,
       fresh: freshSet.has(n.id),
       importance: view.importance[n.id],
+      degree: view.degree[n.id],
     },
   }));
 

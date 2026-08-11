@@ -136,7 +136,13 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   clearError: () => set({ error: null, status: "idle" }),
 
   selectNode: (id) =>
-    set((s) => ({ viewConfig: { ...s.viewConfig, selectedNodeId: id } })),
+    set((s) => ({
+      viewConfig: {
+        ...s.viewConfig,
+        selectedNodeId: id,
+        focusDepth: id ? 1 : undefined,
+      },
+    })),
 
   setViewConfig: (config) =>
     set((s) => ({ viewConfig: { ...s.viewConfig, ...config } })),

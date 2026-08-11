@@ -57,6 +57,18 @@ export function CanvasHeader() {
           </button>
           <span className="text-faint">›</span>
           <span className="truncate font-medium text-muted">{selectedLabel}</span>
+          <button
+            title="Expand neighborhood"
+            aria-label="Expand neighborhood"
+            onClick={() =>
+              setViewConfig({
+                focusDepth: (viewConfig.focusDepth ?? 1) + 1,
+              })
+            }
+            className="ml-1 grid size-4 place-items-center rounded bg-surface-2 text-muted transition-colors hover:text-foreground"
+          >
+            +
+          </button>
         </div>
       )}
 

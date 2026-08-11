@@ -34,6 +34,8 @@ export interface WeaveNodeData extends Record<string, unknown> {
   ghost?: boolean;
   /** Importance score (0-1) from the view engine, drives visual prominence. */
   importance?: number;
+  /** Degree centrality from the view engine; high-degree nodes are entry points. */
+  degree?: number;
 }
 
 export type WeaveFlowNode = Node<WeaveNodeData, "weave">;
@@ -72,6 +74,8 @@ export type SemanticZoomLevel = "overview" | "category" | "entity" | "detail";
 export interface ViewConfig {
   type: ViewType;
   selectedNodeId?: string;
+  /** Neighborhood hop depth when a node is focused (adaptive granularity). */
+  focusDepth?: number;
   semanticZoom: SemanticZoomLevel;
 }
 

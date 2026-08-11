@@ -41,6 +41,8 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
   // Importance drives visual prominence. Range 0.9 (peripheral) -> 1.15 (hub).
   const importance = Math.max(0, Math.min(1, data.importance ?? 0.5));
   const nodeScale = 0.9 + importance * 0.25;
+  // High-degree nodes are entry points into a subgraph.
+  const isEntryPoint = (data.degree ?? 0) > 3;
 
   return (
     <motion.div
@@ -57,6 +59,14 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
         data.fresh ? "ring-2 ring-accent/60" : "",
       ].join(" ")}
     >
+      {isEntryPoint && (
+        <span
+          title={`${data.degree} connected concepts — click to focus`}
+          className="absolute -right-1.5 -top-1.5 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-bold leading-none text-accent-ink shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+        >
+          +{data.degree}
+        </span>
+      )}
       <Handle type="target" position={Position.Top} className="!opacity-0" />
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
 
