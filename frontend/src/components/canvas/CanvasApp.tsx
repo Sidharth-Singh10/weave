@@ -4,12 +4,14 @@ import { useCallback } from "react";
 import {
   Background,
   BackgroundVariant,
+  ControlButton,
   Controls,
   ReactFlow,
   SelectionMode,
   useReactFlow,
   ReactFlowProvider,
 } from "@xyflow/react";
+import { Graph } from "@phosphor-icons/react";
 import "@xyflow/react/dist/style.css";
 import { useGraphStore } from "@/lib/store";
 import { useRenderGraph } from "@/lib/graph-projection";
@@ -27,6 +29,7 @@ function Flow() {
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onConnect = useGraphStore((s) => s.onConnect);
   const selectNode = useGraphStore((s) => s.selectNode);
+  const relayout = useGraphStore((s) => s.relayout);
   const onMove = useSemanticZoom();
   const { fitView } = useReactFlow();
 
@@ -70,7 +73,15 @@ function Flow() {
           position="bottom-right"
           showInteractive={false}
           className="!border-line !bg-surface [&_button]:!border-line [&_button]:!bg-surface [&_button]:!fill-muted"
-        />
+        >
+          <ControlButton
+            title="Re-layout graph"
+            aria-label="Re-layout graph"
+            onClick={relayout}
+          >
+            <Graph size={18} weight="bold" />
+          </ControlButton>
+        </Controls>
       </ReactFlow>
 
       {renderNodes.length === 0 && (

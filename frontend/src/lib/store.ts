@@ -8,6 +8,7 @@ import type {
 } from "@xyflow/react";
 import { ingestNote } from "./api";
 import { applyGraphDelta } from "./graph-ops";
+import { computeLayoutContext, relayout } from "./layout";
 import type {
   GhostNode,
   GraphDelta,
@@ -44,6 +45,7 @@ interface GraphState {
   submit: (text: string) => Promise<void>;
   renameNode: (id: string, label: string) => void;
   selectNode: (id: string | undefined) => void;
+  relayout: () => void;
   setViewConfig: (config: Partial<ViewConfig>) => void;
   setCommunityLabel: (signature: string, label: string) => void;
   clearError: () => void;
@@ -139,6 +141,14 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   setViewConfig: (config) =>
     set((s) => ({ viewConfig: { ...s.viewConfig, ...config } })),
 
+  relayout: () =>
+    set((s) => {
+      if (s.knowledgeNodes.length === 0) return s;
+      return {
+        positions: relayout(s.knowledgeNodes, s.knowledgeEdges, s.positions),
+      };
+    }),
+
   setCommunityLabel: (signature, label) =>
     set((s) => ({ communityLabels: { ...s.communityLabels, [signature]: label } })),
 
@@ -186,11 +196,16 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       });
 
       set((state) => {
+        const layout = computeLayoutContext(
+          state.knowledgeNodes,
+          state.knowledgeEdges
+        );
         const result = applyGraphDelta(
           state.knowledgeNodes,
           state.knowledgeEdges,
           delta,
-          state.positions
+          state.positions,
+          layout
         );
 
         return {

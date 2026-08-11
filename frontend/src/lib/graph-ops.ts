@@ -1,4 +1,9 @@
-import type { KnowledgeEdge, KnowledgeNode, XYPosition } from "./graph-types";
+import type {
+  KnowledgeEdge,
+  KnowledgeNode,
+  LayoutContext,
+  XYPosition,
+} from "./graph-types";
 import type { GraphDelta } from "./graph-types";
 
 export interface ApplyDeltaResult {
@@ -17,15 +22,32 @@ export function slug(label: string) {
     .replace(/(^-|-$)/g, "");
 }
 
-/** Find a position for a new node: radially around its primary parent if any,
- * otherwise offset from the graph's centroid. */
+/** Find a position for a new node. When the parent belongs to a community,
+ * fan the node out within that community's sector so related nodes cluster;
+ * otherwise fall back to uniform radial placement. */
 function placeNode(
   parentPos: XYPosition | undefined,
   siblings: number,
-  index: number
+  index: number,
+  layout?: LayoutContext,
+  parentId?: string
 ): XYPosition {
-  const angle = (Math.PI * 2 * (index + siblings)) / Math.max(siblings + 1, 3);
   const radius = 220;
+
+  if (parentPos && parentId && layout) {
+    const cid = layout.community[parentId];
+    const sector = cid !== undefined ? layout.communitySector[cid] : undefined;
+    if (sector !== undefined) {
+      const spread = Math.min(siblings, 6);
+      const angle = sector + (index - spread / 2) * 0.35;
+      return {
+        x: parentPos.x + radius * Math.cos(angle),
+        y: parentPos.y + radius * Math.sin(angle),
+      };
+    }
+  }
+
+  const angle = (Math.PI * 2 * (index + siblings)) / Math.max(siblings + 1, 3);
   if (parentPos) {
     return {
       x: parentPos.x + radius * Math.cos(angle),
@@ -45,7 +67,8 @@ export function applyGraphDelta(
   nodes: KnowledgeNode[],
   edges: KnowledgeEdge[],
   delta: GraphDelta,
-  existingPositions: Record<string, XYPosition>
+  existingPositions: Record<string, XYPosition>,
+  layout?: LayoutContext
 ): ApplyDeltaResult {
   const byId = new Map(nodes.map((n) => [n.id, n] as const));
   const byLabel = new Map(
@@ -136,7 +159,7 @@ export function applyGraphDelta(
     const siblings = parentId ? (parentChildCount.get(parentId) ?? 1) - 1 : 0;
     const idx = childIndex.get(parentId ?? "") ?? 0;
     childIndex.set(parentId ?? "", idx + 1);
-    positions[node.id] = placeNode(parentPos, siblings, idx);
+    positions[node.id] = placeNode(parentPos, siblings, idx, layout, parentId);
   }
 
   return {

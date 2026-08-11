@@ -74,3 +74,13 @@ export interface ViewConfig {
   selectedNodeId?: string;
   semanticZoom: SemanticZoomLevel;
 }
+
+/** Semantic layout constraints derived from the knowledge graph. */
+export interface LayoutContext {
+  /** nodeId -> community id. */
+  community: Record<string, number>;
+  /** community id -> dominant sector angle (radians). */
+  communitySector: Record<number, number>;
+  /** nodeId -> importance (0-1). */
+  importance: Record<string, number>;
+}
