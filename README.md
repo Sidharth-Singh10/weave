@@ -2,13 +2,8 @@
 
 Weave is an AI-powered knowledge graph application. You type plain-language notes and Weave automatically extracts concepts and relationships, weaving them into a living, adaptive knowledge graph — no manual node creation or connector drawing.
 
-```text
-  Ron
-   \
-Harry Potter ---- Hermione
-   \
-  Hogwarts
-```
+<img width="1853" height="1095" alt="image" src="https://github.com/user-attachments/assets/b8486116-c859-4ff4-853c-ebd5be7717cf" />
+
 
 ## Features
 
@@ -151,8 +146,3 @@ frontend/src/components/canvas/   CanvasApp, WeaveNode, CanvasHeader, InputDock,
 frontend/src/lib/       store (knowledge graph), api, graph-ops, graph-projection,
                         communities, layout, useSemanticZoom, useCommunityLabels
 ```
-
-## Iteration Roadmap
-
-- `iteration1.md` — original product proposal (automatic graph construction).
-- `iteration2_agent_implementation_guide.md` — Iteration 2 implementation guide (adaptive knowledge graph visualization), including the knowledge-graph ≠ visualization architecture rule.
