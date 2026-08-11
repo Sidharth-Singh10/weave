@@ -13,6 +13,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useGraphStore } from "@/lib/store";
 import { useRenderGraph } from "@/lib/graph-projection";
+import { useSemanticZoom } from "@/lib/useSemanticZoom";
 import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
@@ -26,6 +27,7 @@ function Flow() {
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onConnect = useGraphStore((s) => s.onConnect);
   const selectNode = useGraphStore((s) => s.selectNode);
+  const onMove = useSemanticZoom();
   const { fitView } = useReactFlow();
 
   const onInit = useCallback(() => {
@@ -43,6 +45,7 @@ function Flow() {
         onConnect={onConnect}
         onNodeClick={(_, node) => selectNode(node.id)}
         onPaneClick={() => selectNode(undefined)}
+        onMove={onMove}
         onInit={onInit}
         panOnScroll
         selectionOnDrag

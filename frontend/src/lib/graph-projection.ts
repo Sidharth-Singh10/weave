@@ -6,6 +6,7 @@ import {
   type GhostNode,
   type KnowledgeEdge,
   type KnowledgeNode,
+  type SemanticZoomLevel,
   type ViewConfig,
   type WeaveFlowNode,
   type XYPosition,
@@ -81,13 +82,51 @@ function focusedView(
 }
 
 /**
+ * Semantic zoom: higher abstraction levels hide lower-importance nodes.
+ * overview shows only prominent nodes, category shows notable ones,
+ * entity/detail show everything. Always keeps at least a small set visible
+ * so zoomed-out views are never empty. Deterministic — no LLM involvement.
+ */
+function filterByImportance(
+  nodes: KnowledgeNode[],
+  edges: KnowledgeEdge[],
+  importance: Record<string, number>,
+  level: SemanticZoomLevel
+): GraphView {
+  if (level === "entity" || level === "detail") {
+    return { visibleNodes: nodes, visibleEdges: edges, importance };
+  }
+  const threshold = level === "overview" ? 0.5 : 0.25;
+  const floor = 3;
+
+  const ranked = [...nodes].sort(
+    (a, b) => (importance[b.id] ?? 0) - (importance[a.id] ?? 0)
+  );
+  const visible = new Set<string>();
+  for (const n of ranked) {
+    if ((importance[n.id] ?? 0) >= threshold || visible.size < floor) {
+      visible.add(n.id);
+    }
+  }
+
+  return {
+    visibleNodes: nodes.filter((n) => visible.has(n.id)),
+    visibleEdges: edges.filter(
+      (e) => visible.has(e.source) && visible.has(e.target)
+    ),
+    importance,
+  };
+}
+
+/**
  * The view engine. Transforms the knowledge graph + a view config into the
  * set of knowledge entities that should currently be displayed. Iteration 2
  * features (importance, semantic zoom, communities, flavors) plug in here.
  *
  * Default view: identity projection; selecting a node focuses its
- * neighborhood. Importance is always derived from the full graph so hubs
- * stay visually prominent when focused.
+ * neighborhood (which disables zoom filtering), otherwise semantic zoom
+ * controls information density. Importance is always derived from the full
+ * graph so hubs stay visually prominent.
  */
 export function createGraphView(
   knowledgeNodes: KnowledgeNode[],
@@ -107,11 +146,12 @@ export function createGraphView(
           importance
         );
       }
-      return {
-        visibleNodes: knowledgeNodes,
-        visibleEdges: knowledgeEdges,
+      return filterByImportance(
+        knowledgeNodes,
+        knowledgeEdges,
         importance,
-      };
+        config.semanticZoom
+      );
   }
 }
 
