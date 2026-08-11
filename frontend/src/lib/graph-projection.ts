@@ -11,7 +11,22 @@ import {
   type WeaveFlowNode,
   type XYPosition,
 } from "./graph-types";
+import { detectCommunities } from "./communities";
 import { useGraphStore } from "./store";
+
+/** Muted hues for community-colored edges, on the dark canvas. */
+const COMMUNITY_COLORS = [
+  "#8b5cf6", // violet
+  "#14b8a6", // teal
+  "#f59e0b", // amber
+  "#ec4899", // pink
+  "#3b82f6", // blue
+  "#22c55e", // green
+];
+
+function communityColor(communityId: number): string {
+  return COMMUNITY_COLORS[communityId % COMMUNITY_COLORS.length];
+}
 
 /**
  * The result of projecting knowledge through a view config: which knowledge
@@ -21,6 +36,8 @@ export interface GraphView {
   visibleNodes: KnowledgeNode[];
   visibleEdges: KnowledgeEdge[];
   importance: Record<string, number>;
+  /** nodeId -> community id, from the full knowledge graph. */
+  communities: Record<string, number>;
 }
 
 export interface RenderState {
@@ -59,11 +76,12 @@ function focusedView(
   nodes: KnowledgeNode[],
   edges: KnowledgeEdge[],
   selectedId: string,
-  importance: Record<string, number>
+  importance: Record<string, number>,
+  communities: Record<string, number>
 ): GraphView {
   const selected = nodes.find((n) => n.id === selectedId);
   if (!selected) {
-    return { visibleNodes: nodes, visibleEdges: edges, importance };
+    return { visibleNodes: nodes, visibleEdges: edges, importance, communities };
   }
 
   const visibleIds = new Set<string>([selectedId]);
@@ -78,6 +96,7 @@ function focusedView(
       (e) => visibleIds.has(e.source) && visibleIds.has(e.target)
     ),
     importance,
+    communities,
   };
 }
 
@@ -91,10 +110,16 @@ function filterByImportance(
   nodes: KnowledgeNode[],
   edges: KnowledgeEdge[],
   importance: Record<string, number>,
+  communities: Record<string, number>,
   level: SemanticZoomLevel
 ): GraphView {
   if (level === "entity" || level === "detail") {
-    return { visibleNodes: nodes, visibleEdges: edges, importance };
+    return {
+      visibleNodes: nodes,
+      visibleEdges: edges,
+      importance,
+      communities,
+    };
   }
   const threshold = level === "overview" ? 0.5 : 0.25;
   const floor = 3;
@@ -115,6 +140,7 @@ function filterByImportance(
       (e) => visible.has(e.source) && visible.has(e.target)
     ),
     importance,
+    communities,
   };
 }
 
@@ -134,6 +160,9 @@ export function createGraphView(
   config: ViewConfig
 ): GraphView {
   const importance = computeImportance(knowledgeNodes, knowledgeEdges);
+  const communities = Object.fromEntries(
+    detectCommunities(knowledgeNodes, knowledgeEdges)
+  );
 
   switch (config.type) {
     case "default":
@@ -143,13 +172,15 @@ export function createGraphView(
           knowledgeNodes,
           knowledgeEdges,
           config.selectedNodeId,
-          importance
+          importance,
+          communities
         );
       }
       return filterByImportance(
         knowledgeNodes,
         knowledgeEdges,
         importance,
+        communities,
         config.semanticZoom
       );
   }
@@ -190,13 +221,26 @@ export function projectToRender(
     });
   }
 
-  const renderEdges: Edge[] = view.visibleEdges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.relation,
-    type: "default",
-  }));
+  const renderEdges: Edge[] = view.visibleEdges.map((e) => {
+    const a = view.communities[e.source];
+    const b = view.communities[e.target];
+    const inCommunity = a !== undefined && a === b;
+    const style = inCommunity
+      ? {
+          stroke: communityColor(a as number),
+          strokeOpacity: 0.5,
+          strokeWidth: 1.5,
+        }
+      : undefined;
+    return {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      label: e.relation,
+      type: "default",
+      style,
+    };
+  });
 
   return { renderNodes, renderEdges };
 }
