@@ -28,11 +28,35 @@ export interface RenderState {
 }
 
 /**
+ * Deterministic importance: normalized degree centrality.
+ * A hub node (many connections) scores 1.0; an isolated node scores 0.
+ * Pure graph metric — visualization metadata, never a knowledge mutation.
+ */
+export function computeImportance(
+  nodes: KnowledgeNode[],
+  edges: KnowledgeEdge[]
+): Record<string, number> {
+  const degree = new Map<string, number>();
+  for (const n of nodes) degree.set(n.id, 0);
+  for (const e of edges) {
+    if (degree.has(e.source)) degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    if (degree.has(e.target)) degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
+  const max = Math.max(...degree.values(), 1);
+  const result: Record<string, number> = {};
+  for (const [id, d] of degree) {
+    result[id] = max > 0 ? d / max : 0.5;
+  }
+  return result;
+}
+
+/**
  * The view engine. Transforms the knowledge graph + a view config into the
  * set of knowledge entities that should currently be displayed. Iteration 2
  * features (importance, semantic zoom, communities, flavors) plug in here.
  *
- * Default view: identity projection — everything is visible.
+ * Default view: identity projection — everything is visible, importance
+ * derived from graph structure.
  */
 export function createGraphView(
   knowledgeNodes: KnowledgeNode[],
@@ -45,7 +69,7 @@ export function createGraphView(
       return {
         visibleNodes: knowledgeNodes,
         visibleEdges: knowledgeEdges,
-        importance: {},
+        importance: computeImportance(knowledgeNodes, knowledgeEdges),
       };
   }
 }
@@ -70,6 +94,7 @@ export function projectToRender(
       label: n.label,
       kind: n.kind,
       fresh: freshSet.has(n.id),
+      importance: view.importance[n.id],
     },
   }));
 

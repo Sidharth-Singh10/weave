@@ -32,6 +32,8 @@ export interface WeaveNodeData extends Record<string, unknown> {
   kind: string;
   fresh: boolean;
   ghost?: boolean;
+  /** Importance score (0-1) from the view engine, drives visual prominence. */
+  importance?: number;
 }
 
 export type WeaveFlowNode = Node<WeaveNodeData, "weave">;

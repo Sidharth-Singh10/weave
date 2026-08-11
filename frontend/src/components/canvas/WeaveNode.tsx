@@ -38,10 +38,14 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
     );
   }
 
+  // Importance drives visual prominence. Range 0.9 (peripheral) -> 1.15 (hub).
+  const importance = Math.max(0, Math.min(1, data.importance ?? 0.5));
+  const nodeScale = 0.9 + importance * 0.25;
+
   return (
     <motion.div
-      initial={data.fresh ? { opacity: 0, scale: 0.6 } : false}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={data.fresh ? { opacity: 0, scale: nodeScale * 0.6 } : false}
+      animate={{ opacity: 1, scale: nodeScale }}
       transition={{ type: "spring", stiffness: 320, damping: 24 }}
       onDoubleClick={() => {
         setDraft(data.label);
