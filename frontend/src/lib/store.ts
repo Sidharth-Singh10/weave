@@ -32,6 +32,8 @@ interface GraphState {
   ghostNode: GhostNode | null;
   /** Which projection of the knowledge graph the user currently sees. */
   viewConfig: ViewConfig;
+  /** Community labels keyed by sorted member-id signature. */
+  communityLabels: Record<string, string>;
 
   status: GraphStatus;
   error: string | null;
@@ -43,6 +45,7 @@ interface GraphState {
   renameNode: (id: string, label: string) => void;
   selectNode: (id: string | undefined) => void;
   setViewConfig: (config: Partial<ViewConfig>) => void;
+  setCommunityLabel: (signature: string, label: string) => void;
   clearError: () => void;
 }
 
@@ -55,6 +58,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   freshIds: [],
   ghostNode: null,
   viewConfig: { type: "default", semanticZoom: "entity" },
+  communityLabels: {},
   status: "idle",
   error: null,
 
@@ -134,6 +138,9 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
   setViewConfig: (config) =>
     set((s) => ({ viewConfig: { ...s.viewConfig, ...config } })),
+
+  setCommunityLabel: (signature, label) =>
+    set((s) => ({ communityLabels: { ...s.communityLabels, [signature]: label } })),
 
   submit: async (text) => {
     const trimmed = text.trim();

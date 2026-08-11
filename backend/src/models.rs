@@ -88,3 +88,16 @@ pub struct SearchResult {
     pub matches: Vec<String>,
     pub rationale: String,
 }
+
+// --- AI community labeling --------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct LabelCommunityRequest {
+    #[serde(default)]
+    pub nodes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LabelCommunityResult {
+    pub label: String,
+}

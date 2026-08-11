@@ -15,7 +15,7 @@ import { detectCommunities } from "./communities";
 import { useGraphStore } from "./store";
 
 /** Muted hues for community-colored edges, on the dark canvas. */
-const COMMUNITY_COLORS = [
+export const COMMUNITY_COLORS = [
   "#8b5cf6", // violet
   "#14b8a6", // teal
   "#f59e0b", // amber

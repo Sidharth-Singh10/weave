@@ -10,7 +10,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use models::{GraphDelta, IngestRequest, OrganizeRequest, OrganizeResult, SearchRequest, SearchResult};
+use models::{
+    GraphDelta, IngestRequest, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
+    OrganizeResult, SearchRequest, SearchResult,
+};
 use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone)]
@@ -46,6 +49,14 @@ async fn search_graph(
     Json(req): Json<SearchRequest>,
 ) -> Json<SearchResult> {
     let result = organize::search(&state.llm, &req).await;
+    Json(result)
+}
+
+async fn label_community_graph(
+    State(state): State<AppState>,
+    Json(req): Json<LabelCommunityRequest>,
+) -> Json<LabelCommunityResult> {
+    let result = organize::label_community(&state.llm, &req).await;
     Json(result)
 }
 
@@ -92,6 +103,7 @@ async fn main() {
         .route("/api/graph/ingest", post(ingest))
         .route("/api/graph/organize", post(organize_graph))
         .route("/api/graph/search", post(search_graph))
+        .route("/api/graph/label-community", post(label_community_graph))
         .route("/api/status", get(llm_status))
         .layer(cors)
         .with_state(state);

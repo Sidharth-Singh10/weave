@@ -1,6 +1,7 @@
 "use client";
 
 import { useGraphStore } from "@/lib/store";
+import { useCommunityLabels } from "@/lib/useCommunityLabels";
 import type { ViewType } from "@/lib/graph-types";
 
 const VIEW_LABELS: Record<ViewType, string> = {
@@ -17,6 +18,7 @@ export function CanvasHeader() {
   const knowledgeNodes = useGraphStore((s) => s.knowledgeNodes);
   const selectNode = useGraphStore((s) => s.selectNode);
   const setViewConfig = useGraphStore((s) => s.setViewConfig);
+  const communities = useCommunityLabels();
 
   const selectedLabel = viewConfig.selectedNodeId
     ? knowledgeNodes.find((n) => n.id === viewConfig.selectedNodeId)?.label
@@ -27,6 +29,23 @@ export function CanvasHeader() {
       <span className="text-sm font-semibold tracking-tight text-foreground">
         Weave
       </span>
+
+      {communities.length > 0 && (
+        <div className="pointer-events-none flex min-w-0 items-center gap-1.5 overflow-x-auto">
+          {communities.map((c) => (
+            <span
+              key={c.signature}
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-background/60 px-2 py-0.5 text-[11px] text-muted"
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: c.color }}
+              />
+              {c.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {selectedLabel && (
         <div className="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-background/60 px-2.5 py-1 text-xs">

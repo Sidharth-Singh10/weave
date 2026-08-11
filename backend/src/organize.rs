@@ -2,7 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::llm::OpenCodeClient;
 use crate::models::{
-    GraphEdge, GraphNode, OrganizeRequest, OrganizeResult, SearchRequest, SearchResult,
+    GraphEdge, GraphNode, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
+    OrganizeResult, SearchRequest, SearchResult,
 };
 
 const ORGANIZE_PROMPT: &str = r#"You are a knowledge-organization assistant for a learning app.
@@ -26,6 +27,12 @@ const SEARCH_PROMPT: &str = r#"You are a search assistant for a knowledge graph.
 Given the graph below and a user question, pick the node labels from the graph that are most relevant to the question.
 Respond with strict JSON only: {"labels":["...", "..."],"rationale":"one short sentence"}
 Use EXACT existing node labels. If nothing matches, return an empty labels array.
+"#;
+
+const LABEL_COMMUNITY_PROMPT: &str = r#"You are a knowledge-graph organizer.
+You are given the node labels of one group of related concepts.
+Suggest ONE short group label (1-3 words, title case) that best captures what these concepts have in common.
+Respond with strict JSON only: {"label":"..."}
 "#;
 
 fn graph_description(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
@@ -52,6 +59,36 @@ pub async fn organize(client: &OpenCodeClient, req: &OrganizeRequest) -> Organiz
         Err(e) => {
             tracing::warn!("organize LLM call failed: {e}");
             OrganizeResult::default()
+        }
+    }
+}
+
+/// Ask the LLM to name a detected community. Graceful: returns an empty
+/// label when the LLM is unavailable or the request fails, so visualization
+/// never breaks on a naming failure.
+pub async fn label_community(
+    client: &OpenCodeClient,
+    req: &LabelCommunityRequest,
+) -> LabelCommunityResult {
+    if !client.available() || req.nodes.is_empty() {
+        return LabelCommunityResult {
+            label: String::new(),
+        };
+    }
+    let user = format!("Node labels: {}", req.nodes.join(", "));
+    match client.chat_json(LABEL_COMMUNITY_PROMPT, &user).await {
+        Ok(json) => {
+            let label = json["label"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            LabelCommunityResult { label }
+        }
+        Err(e) => {
+            tracing::warn!("label_community LLM call failed: {e}");
+            LabelCommunityResult {
+                label: String::new(),
+            }
         }
     }
 }
@@ -166,6 +203,19 @@ mod tests {
             target_label: tgt.to_string(),
             relation: rel.to_string(),
         }
+    }
+
+    /// Empty member list must never reach the LLM; returns an empty label.
+    #[test]
+    fn label_community_empty_nodes_returns_empty() {
+        let client = OpenCodeClient::from_env();
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(label_community(
+                &client,
+                &LabelCommunityRequest { nodes: vec![] },
+            ));
+        assert!(result.label.is_empty());
     }
 
     /// Linear chain: A - B - C - D - E
