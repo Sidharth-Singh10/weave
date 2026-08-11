@@ -24,6 +24,20 @@ export const COMMUNITY_COLORS = [
   "#22c55e", // green
 ];
 
+/** Topic colors keyed by node kind, used by the Topic view projection. */
+export const TOPIC_COLORS: Record<string, string> = {
+  person: "#8b5cf6",
+  place: "#14b8a6",
+  org: "#f59e0b",
+  event: "#ec4899",
+  object: "#3b82f6",
+  concept: "#22c55e",
+};
+
+function topicColor(kind: string): string {
+  return TOPIC_COLORS[kind] ?? "#a1a1aa";
+}
+
 function communityColor(communityId: number): string {
   return COMMUNITY_COLORS[communityId % COMMUNITY_COLORS.length];
 }
@@ -40,6 +54,8 @@ export interface GraphView {
   communities: Record<string, number>;
   /** nodeId -> degree centrality, from the full knowledge graph. */
   degree: Record<string, number>;
+  /** nodeId -> topic color, populated by the Topic view projection. */
+  topics?: Record<string, string>;
 }
 
 export interface RenderState {
@@ -209,29 +225,55 @@ export function createGraphView(
   );
   const degree = computeDegree(knowledgeNodes, knowledgeEdges);
 
+  let view: GraphView;
   switch (config.type) {
+    case "topic":
+      view = config.selectedNodeId
+        ? focusedView(
+            knowledgeNodes,
+            knowledgeEdges,
+            config.selectedNodeId,
+            config.focusDepth ?? 1,
+            importance,
+            communities,
+            degree
+          )
+        : filterByImportance(
+            knowledgeNodes,
+            knowledgeEdges,
+            importance,
+            communities,
+            degree,
+            config.semanticZoom
+          );
+      // Topic flavor: same knowledge, kind-tinted node accents + legend.
+      const topics: Record<string, string> = {};
+      for (const n of knowledgeNodes) topics[n.id] = topicColor(n.kind);
+      view = { ...view, topics };
+      break;
     case "default":
     default:
-      if (config.selectedNodeId) {
-        return focusedView(
-          knowledgeNodes,
-          knowledgeEdges,
-          config.selectedNodeId,
-          config.focusDepth ?? 1,
-          importance,
-          communities,
-          degree
-        );
-      }
-      return filterByImportance(
-        knowledgeNodes,
-        knowledgeEdges,
-        importance,
-        communities,
-        degree,
-        config.semanticZoom
-      );
+      view = config.selectedNodeId
+        ? focusedView(
+            knowledgeNodes,
+            knowledgeEdges,
+            config.selectedNodeId,
+            config.focusDepth ?? 1,
+            importance,
+            communities,
+            degree
+          )
+        : filterByImportance(
+            knowledgeNodes,
+            knowledgeEdges,
+            importance,
+            communities,
+            degree,
+            config.semanticZoom
+          );
+      break;
   }
+  return view;
 }
 
 /**
@@ -256,6 +298,7 @@ export function projectToRender(
       fresh: freshSet.has(n.id),
       importance: view.importance[n.id],
       degree: view.degree[n.id],
+      topicColor: view.topics?.[n.id],
     },
   }));
 

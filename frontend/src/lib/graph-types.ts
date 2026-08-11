@@ -36,6 +36,8 @@ export interface WeaveNodeData extends Record<string, unknown> {
   importance?: number;
   /** Degree centrality from the view engine; high-degree nodes are entry points. */
   degree?: number;
+  /** Topic-view accent color (kind-based), set when the Topic flavor is active. */
+  topicColor?: string;
 }
 
 export type WeaveFlowNode = Node<WeaveNodeData, "weave">;

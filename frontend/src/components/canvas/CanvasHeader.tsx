@@ -1,7 +1,9 @@
 "use client";
 
+import { useMemo } from "react";
 import { useGraphStore } from "@/lib/store";
 import { useCommunityLabels } from "@/lib/useCommunityLabels";
+import { TOPIC_COLORS } from "@/lib/graph-projection";
 import type { ViewType } from "@/lib/graph-types";
 
 const VIEW_LABELS: Record<ViewType, string> = {
@@ -9,8 +11,7 @@ const VIEW_LABELS: Record<ViewType, string> = {
   topic: "Topic",
 };
 
-/** View tabs. Only functional views are shown; Topic lands in a later step. */
-const VIEW_ORDER: ViewType[] = ["default"];
+const VIEW_ORDER: ViewType[] = ["default", "topic"];
 
 /** Compact overlay at the top of the canvas: brand mark + breadcrumb + view tabs. */
 export function CanvasHeader() {
@@ -19,6 +20,17 @@ export function CanvasHeader() {
   const selectNode = useGraphStore((s) => s.selectNode);
   const setViewConfig = useGraphStore((s) => s.setViewConfig);
   const communities = useCommunityLabels();
+
+  const isTopic = viewConfig.type === "topic";
+
+  const topics = useMemo(() => {
+    if (!isTopic) return [];
+    const seen = new Map<string, string>();
+    for (const n of knowledgeNodes) {
+      if (!seen.has(n.kind)) seen.set(n.kind, TOPIC_COLORS[n.kind] ?? "#a1a1aa");
+    }
+    return Array.from(seen.entries());
+  }, [isTopic, knowledgeNodes]);
 
   const selectedLabel = viewConfig.selectedNodeId
     ? knowledgeNodes.find((n) => n.id === viewConfig.selectedNodeId)?.label
@@ -30,7 +42,24 @@ export function CanvasHeader() {
         Weave
       </span>
 
-      {communities.length > 0 && (
+      {isTopic && topics.length > 0 && (
+        <div className="pointer-events-none flex min-w-0 items-center gap-1.5 overflow-x-auto">
+          {topics.map(([kind, color]) => (
+            <span
+              key={kind}
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-background/60 px-2 py-0.5 text-[11px] text-muted"
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: color }}
+              />
+              {kind}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {!isTopic && communities.length > 0 && (
         <div className="pointer-events-none flex min-w-0 items-center gap-1.5 overflow-x-auto">
           {communities.map((c) => (
             <span

@@ -58,6 +58,11 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
         selected ? "border-accent" : "border-line hover:border-faint",
         data.fresh ? "ring-2 ring-accent/60" : "",
       ].join(" ")}
+      style={
+        data.topicColor
+          ? { borderLeftWidth: 3, borderLeftColor: data.topicColor }
+          : undefined
+      }
     >
       {isEntryPoint && (
         <span
