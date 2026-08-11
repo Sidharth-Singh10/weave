@@ -13,6 +13,7 @@ import type {
   GraphDelta,
   KnowledgeEdge,
   KnowledgeNode,
+  ViewConfig,
   WeaveFlowNode,
   XYPosition,
 } from "./graph-types";
@@ -29,6 +30,8 @@ interface GraphState {
   freshIds: string[];
   /** Transient "Weaving..." indicator while a request is in flight. */
   ghostNode: GhostNode | null;
+  /** Which projection of the knowledge graph the user currently sees. */
+  viewConfig: ViewConfig;
 
   status: GraphStatus;
   error: string | null;
@@ -38,6 +41,7 @@ interface GraphState {
   onConnect: (conn: Connection) => void;
   submit: (text: string) => Promise<void>;
   renameNode: (id: string, label: string) => void;
+  setViewConfig: (config: Partial<ViewConfig>) => void;
   clearError: () => void;
 }
 
@@ -49,6 +53,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   positions: {},
   freshIds: [],
   ghostNode: null,
+  viewConfig: { type: "default", semanticZoom: "entity" },
   status: "idle",
   error: null,
 
@@ -122,6 +127,9 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
     })),
 
   clearError: () => set({ error: null, status: "idle" }),
+
+  setViewConfig: (config) =>
+    set((s) => ({ viewConfig: { ...s.viewConfig, ...config } })),
 
   submit: async (text) => {
     const trimmed = text.trim();

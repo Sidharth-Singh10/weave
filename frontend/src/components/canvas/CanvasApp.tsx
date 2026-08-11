@@ -16,6 +16,7 @@ import { useRenderGraph } from "@/lib/graph-projection";
 import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
+import { CanvasHeader } from "./CanvasHeader";
 
 const nodeTypes = { weave: WeaveNode };
 
@@ -77,6 +78,7 @@ function Flow() {
         </div>
       )}
 
+      <CanvasHeader />
       <InputDock />
     </div>
   );

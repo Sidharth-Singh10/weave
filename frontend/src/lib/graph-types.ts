@@ -61,3 +61,14 @@ export interface GhostNode {
   id: string;
   position: XYPosition;
 }
+
+export type ViewType = "default" | "topic";
+
+export type SemanticZoomLevel = "overview" | "category" | "entity" | "detail";
+
+/** What the user currently wants to see. Views are projections, not data. */
+export interface ViewConfig {
+  type: ViewType;
+  selectedNodeId?: string;
+  semanticZoom: SemanticZoomLevel;
+}

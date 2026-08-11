@@ -6,10 +6,21 @@ import {
   type GhostNode,
   type KnowledgeEdge,
   type KnowledgeNode,
+  type ViewConfig,
   type WeaveFlowNode,
   type XYPosition,
 } from "./graph-types";
 import { useGraphStore } from "./store";
+
+/**
+ * The result of projecting knowledge through a view config: which knowledge
+ * entities are visible, plus derived display metadata (importance, groups...).
+ */
+export interface GraphView {
+  visibleNodes: KnowledgeNode[];
+  visibleEdges: KnowledgeEdge[];
+  importance: Record<string, number>;
+}
 
 export interface RenderState {
   renderNodes: WeaveFlowNode[];
@@ -17,20 +28,41 @@ export interface RenderState {
 }
 
 /**
- * Identity projection from knowledge + layout metadata to ReactFlow render
- * objects. This is where Iteration 2 view filtering/grouping will plug in.
- * For now every knowledge node/edge is visible.
+ * The view engine. Transforms the knowledge graph + a view config into the
+ * set of knowledge entities that should currently be displayed. Iteration 2
+ * features (importance, semantic zoom, communities, flavors) plug in here.
+ *
+ * Default view: identity projection — everything is visible.
  */
-export function projectToRender(
+export function createGraphView(
   knowledgeNodes: KnowledgeNode[],
   knowledgeEdges: KnowledgeEdge[],
+  config: ViewConfig
+): GraphView {
+  switch (config.type) {
+    case "default":
+    default:
+      return {
+        visibleNodes: knowledgeNodes,
+        visibleEdges: knowledgeEdges,
+        importance: {},
+      };
+  }
+}
+
+/**
+ * Project a GraphView + layout metadata into ReactFlow render objects.
+ * Every visible knowledge node/edge becomes a render node/edge.
+ */
+export function projectToRender(
+  view: GraphView,
   positions: Record<string, XYPosition>,
   freshIds: string[],
   ghostNode: GhostNode | null
 ): RenderState {
   const freshSet = new Set(freshIds);
 
-  const renderNodes: WeaveFlowNode[] = knowledgeNodes.map((n) => ({
+  const renderNodes: WeaveFlowNode[] = view.visibleNodes.map((n) => ({
     id: n.id,
     type: "weave",
     position: positions[n.id] ?? { x: 0, y: 0 },
@@ -52,7 +84,7 @@ export function projectToRender(
     });
   }
 
-  const renderEdges: Edge[] = knowledgeEdges.map((e) => ({
+  const renderEdges: Edge[] = view.visibleEdges.map((e) => ({
     id: e.id,
     source: e.source,
     target: e.target,
@@ -63,23 +95,23 @@ export function projectToRender(
   return { renderNodes, renderEdges };
 }
 
-/** Subscribe to the knowledge graph and project it to ReactFlow objects. */
+/** Subscribe to the knowledge graph, project it through the view, and map to
+ * ReactFlow objects. */
 export function useRenderGraph(): RenderState {
   const knowledgeNodes = useGraphStore((s) => s.knowledgeNodes);
   const knowledgeEdges = useGraphStore((s) => s.knowledgeEdges);
   const positions = useGraphStore((s) => s.positions);
   const freshIds = useGraphStore((s) => s.freshIds);
   const ghostNode = useGraphStore((s) => s.ghostNode);
+  const viewConfig = useGraphStore((s) => s.viewConfig);
+
+  const view = useMemo(
+    () => createGraphView(knowledgeNodes, knowledgeEdges, viewConfig),
+    [knowledgeNodes, knowledgeEdges, viewConfig]
+  );
 
   return useMemo(
-    () =>
-      projectToRender(
-        knowledgeNodes,
-        knowledgeEdges,
-        positions,
-        freshIds,
-        ghostNode
-      ),
-    [knowledgeNodes, knowledgeEdges, positions, freshIds, ghostNode]
+    () => projectToRender(view, positions, freshIds, ghostNode),
+    [view, positions, freshIds, ghostNode]
   );
 }
