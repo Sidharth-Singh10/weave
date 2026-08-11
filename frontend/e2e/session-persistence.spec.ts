@@ -1,5 +1,24 @@
 import { test, expect, type Page } from "@playwright/test";
 
+interface PersistedNode {
+  id: string;
+  label: string;
+  kind: string;
+}
+
+interface PersistedScene {
+  version: number;
+  nodes: PersistedNode[];
+  edges: { id: string; source: string; target: string; relation: string }[];
+  positions: Record<string, { x: number; y: number }>;
+  viewConfig: { type: string; semanticZoom: string };
+}
+
+interface SessionMeta {
+  id: string;
+  name: string;
+}
+
 /** Type a note and submit it through the InputDock. */
 async function addNote(page: Page, text: string) {
   const input = page.getByRole("textbox", { name: "Add a note to the graph" });
@@ -8,17 +27,19 @@ async function addNote(page: Page, text: string) {
 }
 
 /** Read the active session's persisted scene blob. */
-async function activeScene(page: Page) {
+async function activeScene(page: Page): Promise<PersistedScene> {
   return page.evaluate(() => {
     const active = localStorage.getItem("weave:active-session");
-    return JSON.parse(localStorage.getItem(`weave:session:${active}`));
+    const raw = active ? localStorage.getItem(`weave:session:${active}`) : null;
+    return JSON.parse(raw ?? "{}") as PersistedScene;
   });
 }
 
-async function sessionNames(page: Page) {
-  return page.evaluate(() =>
-    JSON.parse(localStorage.getItem("weave:sessions")).map((s) => s.name)
-  );
+async function sessionNames(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem("weave:sessions");
+    return (JSON.parse(raw ?? "[]") as SessionMeta[]).map((s) => s.name);
+  });
 }
 
 /** Open the session switcher dropdown. The menu stays open after a menuitem
@@ -41,9 +62,13 @@ test.describe("Excalidraw-style persistent sessions", () => {
     await expect(switchBtn(page)).toContainText("Session 1");
 
     const state = await page.evaluate(() => {
-      const sessions = JSON.parse(localStorage.getItem("weave:sessions"));
+      const sessions = JSON.parse(
+        localStorage.getItem("weave:sessions") ?? "[]"
+      ) as SessionMeta[];
       const active = localStorage.getItem("weave:active-session");
-      const scene = JSON.parse(localStorage.getItem(`weave:session:${active}`));
+      const scene = JSON.parse(
+        (active ? localStorage.getItem(`weave:session:${active}`) : null) ?? "{}"
+      ) as PersistedScene;
       return {
         sessions,
         active,
