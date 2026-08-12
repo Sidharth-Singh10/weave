@@ -1,0 +1,37 @@
+# Local development infrastructure for weave-api.
+# PostgreSQL is the durable source of truth; Redis holds hot-path counters.
+#
+#   docker compose up -d
+#   cd backend && cargo run
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: weave
+      POSTGRES_PASSWORD: weave
+      POSTGRES_DB: weave
+    ports:
+      - "5432:5432"
+    volumes:
+      - weave_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weave -d weave"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - weave_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  weave_pg:
+  weave_redis:

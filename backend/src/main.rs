@@ -1,28 +1,54 @@
+mod config;
+mod db;
+mod error;
 mod extract;
 mod llm;
 mod models;
 mod organize;
+mod redis_store;
+mod request_id;
+
+use std::sync::Arc;
 
 use axum::{
-    extract::State,
-    http::StatusCode,
+    Json, Router,
+    extract::{DefaultBodyLimit, State},
+    http::{Method, StatusCode, header},
+    middleware,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use models::{
     GraphDelta, IngestRequest, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
     OrganizeResult, SearchRequest, SearchResult,
 };
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
+
+use crate::config::Config;
+use crate::request_id::RequestId;
 
 #[derive(Clone)]
 struct AppState {
-    llm: std::sync::Arc<llm::OpenCodeClient>,
+    config: Arc<Config>,
+    llm: Arc<llm::OpenCodeClient>,
+    db: sqlx::PgPool,
+    redis: redis_store::Redis,
 }
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn health_ready(State(state): State<AppState>) -> Result<&'static str, (StatusCode, String)> {
+    db::ping(&state.db)
+        .await
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("db: {e}")))?;
+    state
+        .redis
+        .ping()
+        .await
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("redis: {e}")))?;
+    Ok("ok")
 }
 
 async fn ingest(
@@ -71,7 +97,7 @@ async fn llm_status(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
 
     tracing_subscriber::fmt()
@@ -81,31 +107,81 @@ async fn main() {
         )
         .init();
 
+    let config = Config::from_env();
     let llm = llm::OpenCodeClient::from_env();
+    let db = db::connect(&config.database_url).await?;
+    let redis = redis_store::Redis::connect(&config.redis_url).await?;
+
     tracing::info!(
         mode = if llm.available() { "opencode" } else { "mock" },
         model = %llm.model,
         base_url = %llm.base_url,
-        "extractor configured"
+        auth_stub = config.auth_stub,
+        "weave-api configured"
     );
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
     let state = AppState {
-        llm: std::sync::Arc::new(llm),
+        config: Arc::new(config),
+        llm: Arc::new(llm),
+        db,
+        redis,
     };
+
+    // CORS is restricted to the real frontend origin(s); credentials are
+    // allowed only with explicit origins, never a wildcard.
+    let origins = state
+        .config
+        .allowed_origins
+        .iter()
+        .filter_map(|o| o.parse::<header::HeaderValue>().ok())
+        .collect::<Vec<_>>();
+    let cors = CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::ACCEPT,
+            "x-request-id".parse().unwrap(),
+        ])
+        .allow_credentials(true)
+        .max_age(std::time::Duration::from_secs(3600));
+
+    // Structured HTTP logs, enriched with the current request id.
+    let trace = TraceLayer::new_for_http().make_span_with(
+        |request: &axum::http::Request<axum::body::Body>| {
+            let request_id = request
+                .extensions()
+                .get::<RequestId>()
+                .map(|r| r.0.clone())
+                .unwrap_or_else(|| "-".into());
+            tracing::info_span!(
+                "http_request",
+                method = %request.method(),
+                uri = %request.uri(),
+                request_id = %request_id,
+            )
+        },
+    );
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
         .route("/api/graph/ingest", post(ingest))
         .route("/api/graph/organize", post(organize_graph))
         .route("/api/graph/search", post(search_graph))
         .route("/api/graph/label-community", post(label_community_graph))
         .route("/api/status", get(llm_status))
+        .layer(DefaultBodyLimit::max(state.config.max_body_bytes))
+        .layer(trace)
         .layer(cors)
+        .layer(middleware::from_fn(request_id::layer))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
@@ -113,5 +189,6 @@ async fn main() {
         .expect("failed to bind port 3001");
 
     tracing::info!("weave-api listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await?;
+    Ok(())
 }
