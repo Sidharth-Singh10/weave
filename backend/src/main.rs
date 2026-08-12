@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod db;
 mod error;
@@ -7,6 +8,7 @@ mod models;
 mod organize;
 mod redis_store;
 mod request_id;
+mod state;
 
 use std::sync::Arc;
 
@@ -24,16 +26,10 @@ use models::{
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
+use crate::auth::oauth::{GoogleOidc, OidcProvider, UnconfiguredOidc};
 use crate::config::Config;
 use crate::request_id::RequestId;
-
-#[derive(Clone)]
-struct AppState {
-    config: Arc<Config>,
-    llm: Arc<llm::OpenCodeClient>,
-    db: sqlx::PgPool,
-    redis: redis_store::Redis,
-}
+use crate::state::AppState;
 
 async fn health() -> &'static str {
     "ok"
@@ -112,11 +108,41 @@ async fn main() -> anyhow::Result<()> {
     let db = db::connect(&config.database_url).await?;
     let redis = redis_store::Redis::connect(&config.redis_url).await?;
 
+    // Build the OIDC provider. Discovery against Google is network-bound, so
+    // bound it: on failure (or missing credentials) OAuth is unavailable but
+    // the rest of the API keeps running.
+    let (oidc, oauth_configured): (Arc<dyn OidcProvider>, bool) =
+        if let (Some(id), Some(secret), Some(redirect)) = (
+            config.google_client_id.clone(),
+            config.google_client_secret.clone(),
+            config.google_redirect_uri.clone(),
+        ) {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                GoogleOidc::new(&id, &secret, &redirect),
+            )
+            .await
+            {
+                Ok(Ok(provider)) => (Arc::new(provider), true),
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "Google OAuth discovery failed; OAuth disabled");
+                    (Arc::new(UnconfiguredOidc), false)
+                }
+                Err(_) => {
+                    tracing::warn!("Google OAuth discovery timed out; OAuth disabled");
+                    (Arc::new(UnconfiguredOidc), false)
+                }
+            }
+        } else {
+            (Arc::new(UnconfiguredOidc), false)
+        };
+
     tracing::info!(
         mode = if llm.available() { "opencode" } else { "mock" },
         model = %llm.model,
         base_url = %llm.base_url,
         auth_stub = config.auth_stub,
+        oauth_configured = oauth_configured,
         "weave-api configured"
     );
 
@@ -125,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         llm: Arc::new(llm),
         db,
         redis,
+        oidc,
     };
 
     // CORS is restricted to the real frontend origin(s); credentials are
@@ -171,6 +198,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let app = Router::new()
+        .merge(auth::routes())
         .route("/health", get(health))
         .route("/health/ready", get(health_ready))
         .route("/api/graph/ingest", post(ingest))
@@ -189,6 +217,10 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to bind port 3001");
 
     tracing::info!("weave-api listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

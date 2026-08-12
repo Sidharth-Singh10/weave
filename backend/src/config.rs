@@ -158,21 +158,44 @@ mod tests {
         "GOOGLE_REDIRECT_URI",
     ];
 
-    fn with_clean_env(entries: &[(&str, &str)]) {
-        for key in CONFIG_KEYS {
-            // SAFETY: test-only single-threaded env mutation (serialized by ENV_LOCK).
-            unsafe { std::env::remove_var(key) };
+    fn with_clean_env(entries: &[(&str, &str)]) -> EnvGuard {
+        let saved = CONFIG_KEYS
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect::<Vec<_>>();
+        for (k, _) in &saved {
+            // SAFETY: test-only, serialized by ENV_LOCK.
+            unsafe { std::env::remove_var(k) };
         }
         for (k, v) in entries {
-            // SAFETY: test-only single-threaded env mutation (serialized by ENV_LOCK).
+            // SAFETY: test-only, serialized by ENV_LOCK.
             unsafe { std::env::set_var(k, v) };
+        }
+        EnvGuard(saved)
+    }
+
+    /// Restores the captured environment on drop so other tests (including
+    /// DB-backed integration tests) never observe leftover fake values.
+    struct EnvGuard(Vec<(&'static str, Option<String>)>);
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                // SAFETY: test-only, serialized by ENV_LOCK.
+                unsafe {
+                    match v {
+                        Some(v) => std::env::set_var(k, v),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
         }
     }
 
     #[test]
     fn defaults_apply() {
         let _guard = ENV_LOCK.lock().unwrap();
-        with_clean_env(&[("DATABASE_URL", "postgres://t"), ("REDIS_URL", "redis://t")]);
+        let _env = with_clean_env(&[("DATABASE_URL", "postgres://t"), ("REDIS_URL", "redis://t")]);
         let c = Config::from_env();
         assert_eq!(c.session_cookie_name, "weave_session");
         assert_eq!(c.session_ttl_seconds, 2_592_000);
@@ -191,7 +214,7 @@ mod tests {
     #[test]
     fn overrides_and_lists_parse() {
         let _guard = ENV_LOCK.lock().unwrap();
-        with_clean_env(&[
+        let _env = with_clean_env(&[
             ("DATABASE_URL", "postgres://t"),
             ("REDIS_URL", "redis://t"),
             ("AUTH_STUB", "true"),

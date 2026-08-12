@@ -20,6 +20,12 @@ redis = { version = "1.5.0", features = ["tokio-comp", "connection-manager"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.24.0", features = ["v4", "serde"] }
 thiserror = "2.0.20"
+oauth2 = { version = "5.0.0", features = ["reqwest"] }
+openidconnect = { version = "4.0.1", features = ["reqwest"] }
+sha2 = "0.11.0"
+hex = "0.4.3"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+time = "0.3"
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
