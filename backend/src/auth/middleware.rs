@@ -66,8 +66,6 @@ fn client_ip(parts: &Parts) -> String {
 /// Fast extractor: reads the [`UserContext`] that a middleware already resolved
 /// and attached to request extensions. Only valid inside routes wrapped by the
 /// graph rate-limit middleware.
-// The inner context is consumed by usage metering (Phase 5).
-#[allow(dead_code)]
 pub struct AuthUser(pub UserContext);
 
 impl FromRequestParts<AppState> for AuthUser {

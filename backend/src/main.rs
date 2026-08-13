@@ -16,6 +16,7 @@ mod request_id;
 mod state;
 #[cfg(test)]
 mod testutil;
+mod usage;
 
 use std::sync::Arc;
 
@@ -168,12 +169,10 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(auth::routes())
         .merge(admin::routes())
-        .merge(
-            graph::routes().layer(middleware::from_fn_with_state(
-                state.clone(),
-                graph::enforce,
-            )),
-        )
+        .merge(graph::routes().layer(middleware::from_fn_with_state(
+            state.clone(),
+            graph::enforce,
+        )))
         .route("/health", get(health))
         .route("/health/ready", get(health_ready))
         .route("/api/status", get(llm_status))

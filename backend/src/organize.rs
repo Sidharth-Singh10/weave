@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::llm::OpenCodeClient;
+use crate::llm::{OpenCodeClient, TokenUsage};
 use crate::models::{
     GraphEdge, GraphNode, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
     OrganizeResult, SearchRequest, SearchResult,
@@ -49,16 +49,19 @@ fn graph_description(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
     format!("Nodes: [{}]\nEdges: [{}]", node_str, edge_str)
 }
 
-pub async fn organize(client: &OpenCodeClient, req: &OrganizeRequest) -> OrganizeResult {
+pub async fn organize(client: &OpenCodeClient, req: &OrganizeRequest) -> (OrganizeResult, Option<TokenUsage>) {
     if !client.available() {
-        return OrganizeResult::default();
+        return (OrganizeResult::default(), None);
     }
     let user = graph_description(&req.nodes, &req.edges);
     match client.chat_json(ORGANIZE_PROMPT, &user).await {
-        Ok(json) => serde_json::from_value(json).unwrap_or_default(),
+        Ok(out) => (
+            serde_json::from_value(out.json).unwrap_or_default(),
+            out.usage,
+        ),
         Err(e) => {
             tracing::warn!("organize LLM call failed: {e}");
-            OrganizeResult::default()
+            (OrganizeResult::default(), None)
         }
     }
 }
@@ -69,36 +72,45 @@ pub async fn organize(client: &OpenCodeClient, req: &OrganizeRequest) -> Organiz
 pub async fn label_community(
     client: &OpenCodeClient,
     req: &LabelCommunityRequest,
-) -> LabelCommunityResult {
+) -> (LabelCommunityResult, Option<TokenUsage>) {
     if !client.available() || req.nodes.is_empty() {
-        return LabelCommunityResult {
-            label: String::new(),
-        };
+        return (
+            LabelCommunityResult {
+                label: String::new(),
+            },
+            None,
+        );
     }
     let user = format!("Node labels: {}", req.nodes.join(", "));
     match client.chat_json(LABEL_COMMUNITY_PROMPT, &user).await {
-        Ok(json) => {
-            let label = json["label"]
+        Ok(out) => {
+            let label = out.json["label"]
                 .as_str()
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
-            LabelCommunityResult { label }
+            (LabelCommunityResult { label }, out.usage)
         }
         Err(e) => {
             tracing::warn!("label_community LLM call failed: {e}");
-            LabelCommunityResult {
-                label: String::new(),
-            }
+            (
+                LabelCommunityResult {
+                    label: String::new(),
+                },
+                None,
+            )
         }
     }
 }
 
-pub async fn search(client: &OpenCodeClient, req: &SearchRequest) -> SearchResult {
+pub async fn search(client: &OpenCodeClient, req: &SearchRequest) -> (SearchResult, Option<TokenUsage>) {
     if !client.available() {
-        return SearchResult {
-            matches: vec![],
-            rationale: "LLM not configured".to_string(),
-        };
+        return (
+            SearchResult {
+                matches: vec![],
+                rationale: "LLM not configured".to_string(),
+            },
+            None,
+        );
     }
 
     let user = format!(
@@ -107,9 +119,9 @@ pub async fn search(client: &OpenCodeClient, req: &SearchRequest) -> SearchResul
         req.query
     );
 
-    let (seeds, rationale) = match client.chat_json(SEARCH_PROMPT, &user).await {
-        Ok(json) => {
-            let seeds = json["labels"]
+    let (seeds, rationale, usage) = match client.chat_json(SEARCH_PROMPT, &user).await {
+        Ok(out) => {
+            let seeds = out.json["labels"]
                 .as_array()
                 .map(|arr| {
                     arr.iter()
@@ -117,27 +129,33 @@ pub async fn search(client: &OpenCodeClient, req: &SearchRequest) -> SearchResul
                         .collect()
                 })
                 .unwrap_or_default();
-            let rationale = json["rationale"]
+            let rationale = out.json["rationale"]
                 .as_str()
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            (seeds, rationale)
+            (seeds, rationale, out.usage)
         }
         Err(e) => {
             tracing::warn!("search LLM call failed: {e}");
-            return SearchResult {
-                matches: vec![],
-                rationale: "search unavailable".to_string(),
-            };
+            return (
+                SearchResult {
+                    matches: vec![],
+                    rationale: "search unavailable".to_string(),
+                },
+                None,
+            );
         }
     };
 
     let matches = expand_neighbors(&seeds, &req.nodes, &req.edges);
 
-    SearchResult {
-        matches,
-        rationale,
-    }
+    (
+        SearchResult {
+            matches,
+            rationale,
+        },
+        usage,
+    )
 }
 
 /// Deterministic expansion: start from the LLM-seeded labels, then include all
@@ -215,7 +233,7 @@ mod tests {
                 &client,
                 &LabelCommunityRequest { nodes: vec![] },
             ));
-        assert!(result.label.is_empty());
+        assert!(result.0.label.is_empty());
     }
 
     /// Linear chain: A - B - C - D - E

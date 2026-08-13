@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use regex::Regex;
 
-use crate::llm::OpenCodeClient;
+use crate::llm::{OpenCodeClient, TokenUsage};
 use crate::models::{GraphDelta, GraphEdge, GraphNode, IngestRequest};
 
 /// Stable, human-readable node IDs: `node-{slug}`, with a numeric suffix on collision.
@@ -138,7 +138,10 @@ Rules:
 - Respond with strict JSON only, matching: {"nodes":[{"label":"...","kind":"person|place|org|event|object|concept"}],"edges":[{"source_label":"...","target_label":"...","relation":"..."}]}
 "#;
 
-pub async fn extract_delta(client: &OpenCodeClient, req: &IngestRequest) -> GraphDelta {
+pub async fn extract_delta(
+    client: &OpenCodeClient,
+    req: &IngestRequest,
+) -> (GraphDelta, Option<TokenUsage>) {
     if client.available() {
         match extract_with_llm(client, req).await {
             Ok(delta) => return delta,
@@ -147,10 +150,13 @@ pub async fn extract_delta(client: &OpenCodeClient, req: &IngestRequest) -> Grap
             }
         }
     }
-    extract_mock(req)
+    (extract_mock(req), None)
 }
 
-async fn extract_with_llm(client: &OpenCodeClient, req: &IngestRequest) -> anyhow::Result<GraphDelta> {
+async fn extract_with_llm(
+    client: &OpenCodeClient,
+    req: &IngestRequest,
+) -> anyhow::Result<(GraphDelta, Option<TokenUsage>)> {
     let existing: Vec<String> = req.nodes.iter().map(|n| n.label.clone()).collect();
     let existing_edges: Vec<String> = req
         .edges
@@ -172,11 +178,11 @@ async fn extract_with_llm(client: &OpenCodeClient, req: &IngestRequest) -> anyho
         req.text
     );
 
-    let json = client.chat_json(SYSTEM_PROMPT, &user).await?;
-    let mut delta: GraphDelta = serde_json::from_value(json)?;
+    let out = client.chat_json(SYSTEM_PROMPT, &user).await?;
+    let mut delta: GraphDelta = serde_json::from_value(out.json)?;
     dedup_against_existing(&mut delta, &existing);
     assign_ids(&mut delta, &req.nodes);
-    Ok(delta)
+    Ok((delta, out.usage))
 }
 
 /// Case-insensitive match, plus first-name / prefix matching so

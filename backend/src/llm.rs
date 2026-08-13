@@ -2,6 +2,32 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context};
 
+/// Provider-reported token usage for one LLM call.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+}
+
+/// A chat completion result: the parsed JSON plus any provider-reported usage.
+#[derive(Debug)]
+pub struct LlmOutput {
+    pub json: serde_json::Value,
+    pub usage: Option<TokenUsage>,
+}
+
+fn parse_usage(raw: &serde_json::Value) -> Option<TokenUsage> {
+    let usage = raw.get("usage")?;
+    if !usage.is_object() {
+        return None;
+    }
+    let input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    let output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    let total_tokens = usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    Some(TokenUsage { input_tokens, output_tokens, total_tokens })
+}
+
 /// OpenAI-compatible client for the opencode-go provider.
 ///
 /// Fully standalone: configuration comes from environment variables only
@@ -42,12 +68,13 @@ impl OpenCodeClient {
         self.api_key.is_some()
     }
 
-    /// Send a chat completion and return the parsed JSON the model produced.
+    /// Send a chat completion and return the parsed JSON the model produced,
+    /// along with provider-reported token usage (if any).
     ///
     /// The model may wrap its JSON in markdown code fences; those are
     /// stripped before parsing. On a transient 5xx / 429 the request is
     /// retried once.
-    pub async fn chat_json(&self, system: &str, user: &str) -> anyhow::Result<serde_json::Value> {
+    pub async fn chat_json(&self, system: &str, user: &str) -> anyhow::Result<LlmOutput> {
         let key = self
             .api_key
             .as_deref()
@@ -99,8 +126,13 @@ impl OpenCodeClient {
             .ok_or_else(|| anyhow!("LLM response missing message content"))?;
 
         let cleaned = strip_code_fences(content);
-        serde_json::from_str(cleaned)
-            .with_context(|| format!("model output was not JSON: {}", truncate(cleaned, 200)))
+        let json = serde_json::from_str(cleaned)
+            .with_context(|| format!("model output was not JSON: {}", truncate(cleaned, 200)))?;
+
+        Ok(LlmOutput {
+            json,
+            usage: parse_usage(&raw),
+        })
     }
 
     /// List model ids exposed by the endpoint (for the status endpoint).

@@ -21,6 +21,7 @@ use crate::models::{
 };
 use crate::ratelimit;
 use crate::state::AppState;
+use crate::usage::{self, UsageRecord};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -120,7 +121,7 @@ pub async fn enforce(
 
 async fn ingest(
     State(state): State<AppState>,
-    _user: AuthUser,
+    AuthUser(user): AuthUser,
     Json(req): Json<IngestRequest>,
 ) -> Result<Json<GraphDelta>, ApiError> {
     if req.text.trim().is_empty() {
@@ -128,35 +129,70 @@ async fn ingest(
             "text must not be empty".into(),
         )));
     }
-    let delta = crate::extract::extract_delta(&state.llm, &req).await;
+    let start = std::time::Instant::now();
+    let (delta, usage) = crate::extract::extract_delta(&state.llm, &req).await;
+    record_usage(&state, &user, "graph.ingest", usage, start, 200).await;
     Ok(Json(delta))
 }
 
 async fn organize_graph(
     State(state): State<AppState>,
-    _user: AuthUser,
+    AuthUser(user): AuthUser,
     Json(req): Json<OrganizeRequest>,
 ) -> Result<Json<OrganizeResult>, ApiError> {
-    let result = crate::organize::organize(&state.llm, &req).await;
+    let start = std::time::Instant::now();
+    let (result, usage) = crate::organize::organize(&state.llm, &req).await;
+    record_usage(&state, &user, "graph.organize", usage, start, 200).await;
     Ok(Json(result))
 }
 
 async fn search_graph(
     State(state): State<AppState>,
-    _user: AuthUser,
+    AuthUser(user): AuthUser,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResult>, ApiError> {
-    let result = crate::organize::search(&state.llm, &req).await;
+    let start = std::time::Instant::now();
+    let (result, usage) = crate::organize::search(&state.llm, &req).await;
+    record_usage(&state, &user, "graph.search", usage, start, 200).await;
     Ok(Json(result))
 }
 
 async fn label_community_graph(
     State(state): State<AppState>,
-    _user: AuthUser,
+    AuthUser(user): AuthUser,
     Json(req): Json<LabelCommunityRequest>,
 ) -> Result<Json<LabelCommunityResult>, ApiError> {
-    let result = crate::organize::label_community(&state.llm, &req).await;
+    let start = std::time::Instant::now();
+    let (result, usage) = crate::organize::label_community(&state.llm, &req).await;
+    record_usage(&state, &user, "graph.label_community", usage, start, 200).await;
     Ok(Json(result))
+}
+
+/// Best-effort usage metering: persist a usage row and feed token counters.
+/// Never fails the request.
+async fn record_usage(
+    state: &AppState,
+    user: &UserContext,
+    endpoint: &'static str,
+    usage: Option<crate::llm::TokenUsage>,
+    start: std::time::Instant,
+    status: i32,
+) {
+    usage::record_and_count(
+        &state.db,
+        &state.redis,
+        UsageRecord {
+            user_id: user.user_id,
+            request_id: uuid::Uuid::parse_str(&user.request_id).ok(),
+            endpoint,
+            provider: Some("opencode".to_string()),
+            model: Some(state.llm.model.clone()),
+            usage,
+            latency_ms: Some(usage::now_ms(start)),
+            status_code: status,
+        },
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -436,5 +472,52 @@ mod tests {
         assert!(retry.is_some(), "429 must include a retry hint");
 
         clear_user_overrides(&ctx.db, id).await;
+    }
+
+    #[tokio::test]
+    async fn usage_is_recorded() {
+        let Some((ctx, _guard)) = setup().await else {
+            eprintln!("skipping: DATABASE_URL/REDIS_URL not set or unavailable");
+            return;
+        };
+        let cookie = login(&ctx.app, "rl@test.com").await;
+        let id = user_id(&ctx.db, "rl@test.com").await;
+        clear_counters(&ctx.redis, id).await;
+
+        // Remove prior usage rows for the shared test user.
+        sqlx::query("DELETE FROM usage_events WHERE user_id = $1")
+            .bind(id)
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+
+        let (status, _) = post(
+            &ctx.app,
+            "/api/graph/ingest",
+            &cookie,
+            r#"{"text":"Hogwarts has four houses.","nodes":[],"edges":[]}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT count(*) FROM usage_events WHERE user_id = $1 AND endpoint = 'graph.ingest'",
+        )
+        .bind(id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "a usage event must be recorded for the ingest");
+
+        let (endpoint, latency_ms, status_code): (String, Option<i64>, i32) = sqlx::query_as(
+            "SELECT endpoint, latency_ms, status_code FROM usage_events WHERE user_id = $1 AND endpoint = 'graph.ingest'",
+        )
+        .bind(id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+        assert_eq!(endpoint, "graph.ingest");
+        assert!(latency_ms.is_some(), "latency must be recorded");
+        assert_eq!(status_code, 200);
     }
 }
