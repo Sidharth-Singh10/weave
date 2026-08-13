@@ -103,15 +103,25 @@ pub async fn enforce(
 
     // Concurrency slot held for the duration of the handler.
     let _concurrency =
-        ratelimit::acquire_concurrency(&state.redis, user.user_id, endpoint, &resolved)
-            .await
-            .map_err(|e| {
+        match ratelimit::acquire_concurrency(&state.redis, user.user_id, endpoint, &resolved).await
+        {
+            Ok(ratelimit::ConcurrencyResult::Acquired(guard)) => Some(guard),
+            Ok(ratelimit::ConcurrencyResult::NotConfigured) => None,
+            Ok(ratelimit::ConcurrencyResult::Limited) => {
+                record_event(&state, &user, event_type::RATE_LIMIT_HIT, endpoint);
+                return Err(ApiError::new(ApiErrorKind::RateLimitExceeded {
+                    retry_after_seconds: 1,
+                })
+                .with_request_id(Some(user.request_id.clone())));
+            }
+            Err(e) => {
                 tracing::error!(error = %e, "redis unavailable; failing closed for {endpoint}");
-                ApiError::new(ApiErrorKind::ServiceUnavailable(
+                return Err(ApiError::new(ApiErrorKind::ServiceUnavailable(
                     "rate limiter temporarily unavailable".into(),
                 ))
-                .with_request_id(Some(user.request_id.clone()))
-            })?;
+                .with_request_id(Some(user.request_id.clone())));
+            }
+        };
 
     parts.extensions.insert(user);
     let request = Request::from_parts(parts, body);

@@ -304,19 +304,28 @@ impl Drop for ConcurrencyGuard {
     }
 }
 
+/// Result of a concurrency-slot acquisition.
+pub enum ConcurrencyResult {
+    /// A slot was acquired; dropping the guard releases it.
+    Acquired(ConcurrencyGuard),
+    /// A concurrency limit is configured and the user is at capacity.
+    Limited,
+    /// No concurrency limit configured; nothing to acquire.
+    NotConfigured,
+}
+
 /// Acquire a concurrency slot if `resolved.concurrent_requests` allows it.
-/// Returns `None` when no concurrency limit is configured.
 pub async fn acquire_concurrency(
     redis: &Redis,
     user_id: Uuid,
     endpoint: &str,
     resolved: &Limits,
-) -> Result<Option<ConcurrencyGuard>, redis::RedisError> {
+) -> Result<ConcurrencyResult, redis::RedisError> {
     let Some(limit) = resolved.concurrent_requests else {
-        return Ok(None);
+        return Ok(ConcurrencyResult::NotConfigured);
     };
     if limit <= 0 {
-        return Ok(None);
+        return Ok(ConcurrencyResult::NotConfigured);
     }
     let key = concurrency_key(user_id, endpoint);
     let script = redis::Script::new(
@@ -340,12 +349,12 @@ pub async fn acquire_concurrency(
         .invoke_async(&mut conn)
         .await?;
     if ok == 1 {
-        Ok(Some(ConcurrencyGuard {
+        Ok(ConcurrencyResult::Acquired(ConcurrencyGuard {
             redis: redis.clone(),
             key,
         }))
     } else {
-        Ok(None)
+        Ok(ConcurrencyResult::Limited)
     }
 }
 

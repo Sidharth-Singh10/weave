@@ -2,8 +2,9 @@
 //!
 //! Redis holds hot-path counters only (rate limits, token quotas, concurrency,
 //! login-abuse throttles, OAuth state). PostgreSQL remains the source of truth.
-//! If Redis is unavailable the application must still start; rate limiting
-//! fails closed on expensive LLM endpoints (see the rate-limit module).
+//! If Redis is unavailable at runtime, expensive graph/LLM endpoints fail
+//! closed (503) rather than allowing unlimited LLM traffic; cheap endpoints
+//! never depend on Redis.
 
 use redis::aio::ConnectionManager;
 

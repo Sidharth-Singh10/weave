@@ -271,6 +271,15 @@ mod tests {
         let _member_cookie = login(&ctx.app, "member@test.com").await;
         let super_cookie = login(&ctx.app, "super@test.com").await;
 
+        // Save the current admin set so we can restore it after the test (the
+        // shared dev DB may hold real admins, e.g. owner@example.com).
+        let saved_admins: Vec<String> = sqlx::query_scalar(
+            "SELECT email FROM users WHERE role_id = (SELECT id FROM roles WHERE name = 'admin')",
+        )
+        .fetch_all(&ctx.db)
+        .await
+        .unwrap();
+
         // Make the shared dev DB deterministic: promote admin@test.com, demote
         // any other active admins so admin@test.com is the sole user with the
         // `admin` role.
@@ -359,5 +368,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::CONFLICT);
+
+        // Restore the pre-test admin set so the shared dev DB is untouched.
+        sqlx::query(
+            r#"UPDATE users SET role_id = (SELECT id FROM roles WHERE name = 'admin')
+               WHERE email = ANY($1) AND status = 'active'"#,
+        )
+        .bind(&saved_admins)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     }
 }
