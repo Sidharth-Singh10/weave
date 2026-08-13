@@ -21,6 +21,8 @@ pub enum ApiErrorKind {
     RateLimitExceeded { retry_after_seconds: u64 },
     #[error("usage limit exceeded")]
     QuotaExceeded,
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("not found")]
@@ -60,6 +62,7 @@ impl ApiError {
             ApiErrorKind::Forbidden => "forbidden",
             ApiErrorKind::RateLimitExceeded { .. } => "rate_limit_exceeded",
             ApiErrorKind::QuotaExceeded => "quota_exceeded",
+            ApiErrorKind::ServiceUnavailable(_) => "service_unavailable",
             ApiErrorKind::InvalidRequest(_) => "invalid_request",
             ApiErrorKind::NotFound => "not_found",
             ApiErrorKind::Conflict(_) => "conflict",
@@ -77,6 +80,7 @@ impl ApiError {
             ApiErrorKind::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             ApiErrorKind::NotFound => StatusCode::NOT_FOUND,
             ApiErrorKind::Conflict(_) => StatusCode::CONFLICT,
+            ApiErrorKind::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiErrorKind::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

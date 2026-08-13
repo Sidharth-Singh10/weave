@@ -130,6 +130,33 @@ fn env_list(key: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
+impl Config {
+    /// Hermetic config for unit tests (reads no environment variables).
+    pub fn test_default() -> Self {
+        Self {
+            database_url: "postgres://test".to_string(),
+            redis_url: "redis://test".to_string(),
+            google_client_id: None,
+            google_client_secret: None,
+            google_redirect_uri: None,
+            frontend_url: "http://localhost:3000".to_string(),
+            allowed_origins: vec!["http://localhost:3000".to_string()],
+            auth_stub: false,
+            session_cookie_name: "weave_session".to_string(),
+            session_ttl_seconds: 3_600,
+            bootstrap_admin_emails: vec![],
+            rate_limit_default_requests_per_minute: 30,
+            rate_limit_default_tokens_per_day: 500_000,
+            hard_ceiling_requests_per_minute: 300,
+            hard_ceiling_tokens_per_day: 20_000_000,
+            oauth_init_limit_per_10_min: 20,
+            oauth_callback_limit_per_10_min: 10,
+            max_body_bytes: 2_097_152,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;

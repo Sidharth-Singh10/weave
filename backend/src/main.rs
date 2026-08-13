@@ -5,10 +5,12 @@ mod config;
 mod db;
 mod error;
 mod extract;
+mod graph;
 mod llm;
 mod models;
 mod organize;
 mod policy;
+mod ratelimit;
 mod redis_store;
 mod request_id;
 mod state;
@@ -23,11 +25,7 @@ use axum::{
     http::{Method, StatusCode, header},
     middleware,
     response::IntoResponse,
-    routing::{get, post},
-};
-use models::{
-    GraphDelta, IngestRequest, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
-    OrganizeResult, SearchRequest, SearchResult,
+    routing::get,
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -50,41 +48,6 @@ async fn health_ready(State(state): State<AppState>) -> Result<&'static str, (St
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("redis: {e}")))?;
     Ok("ok")
-}
-
-async fn ingest(
-    State(state): State<AppState>,
-    Json(req): Json<IngestRequest>,
-) -> Result<Json<GraphDelta>, (StatusCode, String)> {
-    if req.text.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "text must not be empty".into()));
-    }
-    let delta = extract::extract_delta(&state.llm, &req).await;
-    Ok(Json(delta))
-}
-
-async fn organize_graph(
-    State(state): State<AppState>,
-    Json(req): Json<OrganizeRequest>,
-) -> Json<OrganizeResult> {
-    let result = organize::organize(&state.llm, &req).await;
-    Json(result)
-}
-
-async fn search_graph(
-    State(state): State<AppState>,
-    Json(req): Json<SearchRequest>,
-) -> Json<SearchResult> {
-    let result = organize::search(&state.llm, &req).await;
-    Json(result)
-}
-
-async fn label_community_graph(
-    State(state): State<AppState>,
-    Json(req): Json<LabelCommunityRequest>,
-) -> Json<LabelCommunityResult> {
-    let result = organize::label_community(&state.llm, &req).await;
-    Json(result)
 }
 
 async fn llm_status(State(state): State<AppState>) -> impl IntoResponse {
@@ -205,12 +168,14 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(auth::routes())
         .merge(admin::routes())
+        .merge(
+            graph::routes().layer(middleware::from_fn_with_state(
+                state.clone(),
+                graph::enforce,
+            )),
+        )
         .route("/health", get(health))
         .route("/health/ready", get(health_ready))
-        .route("/api/graph/ingest", post(ingest))
-        .route("/api/graph/organize", post(organize_graph))
-        .route("/api/graph/search", post(search_graph))
-        .route("/api/graph/label-community", post(label_community_graph))
         .route("/api/status", get(llm_status))
         .layer(DefaultBodyLimit::max(state.config.max_body_bytes))
         .layer(trace)

@@ -63,6 +63,34 @@ fn client_ip(parts: &Parts) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Fast extractor: reads the [`UserContext`] that a middleware already resolved
+/// and attached to request extensions. Only valid inside routes wrapped by the
+/// graph rate-limit middleware.
+// The inner context is consumed by usage metering (Phase 5).
+#[allow(dead_code)]
+pub struct AuthUser(pub UserContext);
+
+impl FromRequestParts<AppState> for AuthUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let request_id = parts
+            .extensions
+            .get::<RequestId>()
+            .map(|r| r.0.clone())
+            .unwrap_or_else(|| "-".into());
+        match parts.extensions.get::<UserContext>().cloned() {
+            Some(ctx) => Ok(AuthUser(ctx)),
+            None => {
+                Err(ApiError::new(ApiErrorKind::Unauthorized).with_request_id(Some(request_id)))
+            }
+        }
+    }
+}
+
 impl FromRequestParts<AppState> for UserContext {
     type Rejection = ApiError;
 
