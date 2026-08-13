@@ -6,7 +6,7 @@ import type {
   EdgeChange,
   NodeChange,
 } from "@xyflow/react";
-import { ingestNote, organizeGraph } from "./api";
+import { ingestNote, organizeGraph, ApiError } from "./api";
 import type { OrganizeResult } from "./api";
 import { applyGraphDelta } from "./graph-ops";
 import { computeLayoutContext, relayout } from "./layout";
@@ -296,8 +296,25 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       set({
         ghostNode: null,
         status: "error" as const,
-        error: err instanceof Error ? err.message : "Something went wrong",
+        error: friendlyError(err),
       });
     }
   },
 }));
+
+/** Human-readable message for rate-limit / quota errors (§66). */
+export function friendlyError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "quota_exceeded") {
+      return "You've reached today's AI usage limit.";
+    }
+    if (err.code === "rate_limit_exceeded" && err.retryAfter) {
+      const secs = Math.max(1, Math.round(err.retryAfter));
+      return `You've reached your current usage limit. Try again in ${secs} second${secs === 1 ? "" : "s"}.`;
+    }
+    if (err.code === "rate_limit_exceeded") {
+      return "You've reached your current usage limit.";
+    }
+  }
+  return err instanceof Error ? err.message : "Something went wrong";
+}

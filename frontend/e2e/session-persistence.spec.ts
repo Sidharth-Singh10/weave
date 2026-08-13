@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { loginAndGoto } from "./auth-helpers";
 
 interface PersistedNode {
   id: string;
@@ -58,7 +59,7 @@ const switchBtn = (page: Page) =>
 
 test.describe("Excalidraw-style persistent sessions", () => {
   test("bootstraps a default session on first visit", async ({ page }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await expect(switchBtn(page)).toContainText("Session 1");
 
     const state = await page.evaluate(() => {
@@ -89,7 +90,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
   test("auto-saves graph changes to localStorage after the debounce", async ({
     page,
   }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await addNote(page, "Ron is afraid of spiders.");
     await expect(page.getByText("spiders", { exact: true })).toBeVisible();
 
@@ -110,7 +111,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
   test("restores the saved session on reload and shows a toast", async ({
     page,
   }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await addNote(page, "Ron is afraid of spiders.");
     await expect(page.getByText("spiders", { exact: true })).toBeVisible();
     await expect
@@ -128,7 +129,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
   test("session switcher: create, isolate, rename, delete, reset", async ({
     page,
   }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await expect(switchBtn(page)).toContainText("Session 1");
 
     // Seed session 1 with a graph.
@@ -194,8 +195,8 @@ test.describe("Excalidraw-style persistent sessions", () => {
   }) => {
     const context = await browser.newContext();
     const pageA = await context.newPage();
-    await pageA.goto("/app");
-    await expect(switchBtn(pageA)).toContainText("Session 1");
+    await loginAndGoto(pageA);
+    await expect(pageA.getByText("Session 1")).toBeVisible();
 
     // Seed the graph in tab A.
     await addNote(pageA, "Harry Potter lives in London.");
@@ -206,7 +207,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
 
     // Tab B hydrates the same graph from shared localStorage.
     const pageB = await context.newPage();
-    await pageB.goto("/app");
+    await loginAndGoto(pageB);
     await expect(pageB.getByText("Harry Potter", { exact: true })).toBeVisible();
 
     // Edit in tab A; tab B picks it up live (storage event), no reload.
@@ -222,7 +223,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
   test("shows the quota-exceeded banner when localStorage is full", async ({
     page,
   }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await expect(switchBtn(page)).toContainText("Session 1");
 
     // Fill localStorage down to the last few bytes so any scene growth fails.
@@ -251,7 +252,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
   });
 
   test("persists the selected view across reloads", async ({ page }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await page.getByRole("button", { name: "Topic" }).click();
 
     await expect
@@ -268,7 +269,7 @@ test.describe("Excalidraw-style persistent sessions", () => {
   test("flushes pending changes on reload before the debounce fires", async ({
     page,
   }) => {
-    await page.goto("/app");
+    await loginAndGoto(page);
     await addNote(page, "Ron is afraid of spiders.");
     // Reload as soon as the node renders — inside the 300ms debounce window —
     // so the beforeunload flush is the only thing that can persist it.

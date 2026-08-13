@@ -17,9 +17,10 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      // Deterministic mock extractor: unset OPENCODE_API_KEY so the backend
-      // never talks to a real LLM during tests.
-      command: "env -u OPENCODE_API_KEY ../backend/target/debug/weave-api",
+      // Deterministic mock extractor (no OPENCODE_API_KEY) + dev auth stub.
+      // Requires local postgres/redis (docker compose up -d).
+      command:
+        "env -u OPENCODE_API_KEY DATABASE_URL=postgres://weave:weave@localhost:5432/weave REDIS_URL=redis://localhost:6379 AUTH_STUB=true ../backend/target/debug/weave-api",
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,

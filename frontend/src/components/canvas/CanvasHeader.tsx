@@ -7,6 +7,7 @@ import { useCommunityLabels } from "@/lib/useCommunityLabels";
 import { usePersistenceStatus } from "@/lib/usePersistenceStatus";
 import { TOPIC_COLORS } from "@/lib/graph-projection";
 import type { ViewType } from "@/lib/graph-types";
+import { UserMenu } from "@/components/auth/UserMenu";
 import { SessionSwitcher } from "./SessionSwitcher";
 
 const VIEW_LABELS: Record<ViewType, string> = {
@@ -139,6 +140,7 @@ export function CanvasHeader() {
             Suggest
           </button>
         </div>
+        <UserMenu />
       </div>
 
       <QuotaBanner />
