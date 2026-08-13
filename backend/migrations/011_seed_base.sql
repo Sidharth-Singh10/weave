@@ -52,7 +52,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Rate-limit policies (global default + per-role)
 -- ---------------------------------------------------------------------------
 INSERT INTO rate_limit_policies (scope_type, endpoint) VALUES ('global', NULL)
-ON CONFLICT (scope_type, endpoint) WHERE scope_type = 'global' DO NOTHING;
+ON CONFLICT (scope_type, (COALESCE(endpoint, ''))) WHERE scope_type = 'global' DO NOTHING;
 
 INSERT INTO rate_limit_rules (policy_id, metric, time_window, limit_value)
 SELECT p.id, metric, time_window, limit_value FROM rate_limit_policies p
@@ -70,7 +70,7 @@ ON CONFLICT (policy_id, metric, time_window) DO NOTHING;
 -- Per-role baseline policies (endpoint NULL = applies to all graph endpoints).
 INSERT INTO rate_limit_policies (scope_type, role_id, endpoint)
 SELECT 'role', r.id, NULL FROM roles r WHERE r.name IN ('guest','member','researcher','admin')
-ON CONFLICT (scope_type, role_id, endpoint) WHERE scope_type = 'role' DO NOTHING;
+ON CONFLICT (scope_type, role_id, (COALESCE(endpoint, ''))) WHERE scope_type = 'role' DO NOTHING;
 
 INSERT INTO rate_limit_rules (policy_id, metric, time_window, limit_value)
 SELECT p.id, r.metric, r.time_window, r.limit_value
@@ -112,7 +112,7 @@ CROSS JOIN (VALUES
     ('graph.ingest'), ('graph.organize'), ('graph.label_community'), ('graph.search')
 ) AS e(endpoint)
 WHERE r.name IN ('guest','member','researcher')
-ON CONFLICT (scope_type, role_id, endpoint) WHERE scope_type = 'role' DO NOTHING;
+ON CONFLICT (scope_type, role_id, (COALESCE(endpoint, ''))) WHERE scope_type = 'role' DO NOTHING;
 
 INSERT INTO rate_limit_rules (policy_id, metric, time_window, limit_value)
 SELECT p.id, 'requests', 'minute', CASE r.name || ':' || p.endpoint

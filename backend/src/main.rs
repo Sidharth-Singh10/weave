@@ -1,3 +1,5 @@
+mod admin;
+mod audit;
 mod auth;
 mod config;
 mod db;
@@ -6,9 +8,12 @@ mod extract;
 mod llm;
 mod models;
 mod organize;
+mod policy;
 mod redis_store;
 mod request_id;
 mod state;
+#[cfg(test)]
+mod testutil;
 
 use std::sync::Arc;
 
@@ -199,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .merge(auth::routes())
+        .merge(admin::routes())
         .route("/health", get(health))
         .route("/health/ready", get(health_ready))
         .route("/api/graph/ingest", post(ingest))

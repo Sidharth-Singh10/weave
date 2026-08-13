@@ -385,7 +385,8 @@ mod tests {
 
     /// Build a test state + router. Returns None when the live dependencies are
     /// unavailable, which makes the test a no-op outside a configured dev env.
-    async fn test_app() -> Option<Router> {
+    async fn test_app() -> Option<(Router, std::sync::MutexGuard<'static, ()>)> {
+        let guard = crate::testutil::db_lock::LOCK.lock().unwrap();
         let db_url = std::env::var("DATABASE_URL").ok()?;
         let redis_url = std::env::var("REDIS_URL").ok()?;
         let pool = db::connect(&db_url).await.ok()?;
@@ -410,7 +411,7 @@ mod tests {
                 },
             )),
         };
-        Some(routes().with_state(state))
+        Some((routes().with_state(state), guard))
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -420,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn stub_login_me_logout_flow() {
-        let Some(app) = test_app().await else {
+        let Some((app, _guard)) = test_app().await else {
             eprintln!("skipping: DATABASE_URL/REDIS_URL not set or unavailable");
             return;
         };

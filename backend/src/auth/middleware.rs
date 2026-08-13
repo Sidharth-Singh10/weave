@@ -7,6 +7,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum_extra::extract::CookieJar;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::sessions;
@@ -17,7 +18,8 @@ use crate::state::AppState;
 
 /// Authenticated request context attached to protected handlers.
 #[derive(Debug, Clone)]
-// Fields are populated now; graph/admin handlers consume them in later phases.
+// Some fields are consumed by rate limiting (role_id) and admin analytics
+// (email/name) in later phases.
 #[allow(dead_code)]
 pub struct UserContext {
     pub user_id: Uuid,
@@ -27,11 +29,13 @@ pub struct UserContext {
     pub email: String,
     pub name: Option<String>,
     pub permissions: HashSet<String>,
+    /// Current request id, threaded into error responses and audit logs.
+    pub request_id: String,
+    /// Hashed client IP for audit logging.
+    pub ip_hash: String,
 }
 
 impl UserContext {
-    // Used by protected graph/admin handlers (Phases 3+).
-    #[allow(dead_code)]
     pub fn has_permission(&self, permission: &str) -> bool {
         self.permissions.contains(permission)
     }
@@ -39,13 +43,24 @@ impl UserContext {
 
 /// Rejects a handler with `403 Forbidden` when the user lacks `permission`.
 /// Use this instead of sprinkling role-name checks through handlers.
-#[allow(dead_code)]
 pub fn require_permission(ctx: &UserContext, permission: &str) -> Result<(), ApiError> {
     if ctx.has_permission(permission) {
         Ok(())
     } else {
-        Err(ApiError::new(ApiErrorKind::Forbidden))
+        Err(ApiError::new(ApiErrorKind::Forbidden).with_request_id(Some(ctx.request_id.clone())))
     }
+}
+
+fn client_ip(parts: &Parts) -> String {
+    parts
+        .headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 impl FromRequestParts<AppState> for UserContext {
@@ -55,10 +70,14 @@ impl FromRequestParts<AppState> for UserContext {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let request_id = parts.extensions.get::<RequestId>().map(|r| r.0.clone());
+        let request_id = parts
+            .extensions
+            .get::<RequestId>()
+            .map(|r| r.0.clone())
+            .unwrap_or_else(|| "-".into());
 
         let unauthorized =
-            || ApiError::new(ApiErrorKind::Unauthorized).with_request_id(request_id.clone());
+            || ApiError::new(ApiErrorKind::Unauthorized).with_request_id(Some(request_id.clone()));
 
         let jar = CookieJar::from_headers(&parts.headers);
         let Some(token) = jar
@@ -86,6 +105,8 @@ impl FromRequestParts<AppState> for UserContext {
         // Best-effort heartbeat; never fail the request on a write hiccup.
         sessions::touch_session(&state.db, su.session_id).await;
 
+        let ip_hash = hex::encode(Sha256::digest(client_ip(parts).as_bytes()));
+
         Ok(UserContext {
             user_id: su.user_id,
             session_id: su.session_id,
@@ -94,6 +115,8 @@ impl FromRequestParts<AppState> for UserContext {
             email: su.email,
             name: su.name,
             permissions,
+            request_id,
+            ip_hash,
         })
     }
 }
