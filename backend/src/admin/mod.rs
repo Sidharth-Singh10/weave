@@ -3,6 +3,7 @@
 //! Every route requires an explicit admin permission (server-side enforced);
 //! never rely on the frontend hiding buttons.
 
+pub mod analytics;
 pub mod policies;
 pub mod roles;
 pub mod users;
@@ -23,6 +24,7 @@ pub fn routes() -> Router<AppState> {
         .merge(users::routes())
         .merge(roles::routes())
         .merge(policies::routes())
+        .merge(analytics::routes())
         .route("/api/admin/audit", get(list_audit))
 }
 

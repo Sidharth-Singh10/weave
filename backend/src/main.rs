@@ -1,4 +1,5 @@
 mod admin;
+mod analytics;
 mod audit;
 mod auth;
 mod config;

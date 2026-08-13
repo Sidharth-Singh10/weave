@@ -21,7 +21,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use time::Duration as CookieDuration;
 
+use crate::analytics::{self, event_type};
 use crate::error::{ApiError, ApiErrorKind};
+use crate::request_id::RequestId;
 use crate::state::AppState;
 use oauth::OidcIdentity;
 
@@ -148,6 +150,7 @@ async fn google_callback(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    request_id: RequestId,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let ip = request_ip(&headers, Some(addr));
@@ -238,6 +241,17 @@ async fn google_callback(
         "login complete"
     );
 
+    analytics::record_spawn(
+        &state.db,
+        analytics::AnalyticsEvent {
+            user_id: Some(user.id),
+            event_type: event_type::LOGIN,
+            request_id: uuid::Uuid::parse_str(&request_id.0).ok(),
+            endpoint: None,
+            metadata: None,
+        },
+    );
+
     let jar = CookieJar::new().add(build_session_cookie(&state.config, &token));
     (
         jar,
@@ -255,7 +269,24 @@ async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
         .get(&state.config.session_cookie_name)
         .map(|c| c.value().to_string())
     {
+        let user_id = sessions::lookup_session(&state.db, &token)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.user_id);
         let _ = sessions::revoke_session(&state.db, &token).await;
+        if let Some(user_id) = user_id {
+            analytics::record_spawn(
+                &state.db,
+                analytics::AnalyticsEvent {
+                    user_id: Some(user_id),
+                    event_type: event_type::LOGOUT,
+                    request_id: None,
+                    endpoint: None,
+                    metadata: None,
+                },
+            );
+        }
     }
     let jar = jar.remove(remove_session_cookie(&state.config));
     (jar, Json(json!({"ok": true}))).into_response()
@@ -355,6 +386,17 @@ async fn test_login(
     .map_err(ApiError::from)?;
 
     tracing::info!(user_id = %user.id, "stub login");
+
+    analytics::record_spawn(
+        &state.db,
+        analytics::AnalyticsEvent {
+            user_id: Some(user.id),
+            event_type: event_type::LOGIN,
+            request_id: None,
+            endpoint: None,
+            metadata: None,
+        },
+    );
 
     let jar = CookieJar::new().add(build_session_cookie(&state.config, &token));
     let body = json!({

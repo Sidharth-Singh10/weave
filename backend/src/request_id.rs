@@ -7,6 +7,7 @@
 //! records, analytics events, and error responses.
 
 use axum::body::Body;
+use axum::extract::FromRequestParts;
 use axum::http::Request;
 use axum::http::header::HeaderValue;
 use axum::middleware::Next;
@@ -15,6 +16,22 @@ use axum::response::Response;
 /// Extension type holding the current request id.
 #[derive(Debug, Clone)]
 pub struct RequestId(pub String);
+
+/// Extractor: fetch the current request id (set by the middleware).
+impl<S: Send + Sync> FromRequestParts<S> for RequestId {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(parts
+            .extensions
+            .get::<RequestId>()
+            .cloned()
+            .unwrap_or_else(|| RequestId("-".into())))
+    }
+}
 
 pub async fn layer(mut request: Request<Body>, next: Next) -> Response {
     let id = request

@@ -13,6 +13,7 @@ use axum::middleware::Next;
 use axum::routing::post;
 use axum::{Json, Router};
 
+use crate::analytics::{self, event_type};
 use crate::auth::middleware::{AuthUser, UserContext, require_permission};
 use crate::error::{ApiError, ApiErrorKind};
 use crate::models::{
@@ -77,6 +78,7 @@ pub async fn enforce(
             .with_request_id(Some(user.request_id.clone()))
         })?;
     if let Some(retry_after_seconds) = blocked {
+        record_event(&state, &user, event_type::RATE_LIMIT_HIT, endpoint);
         return Err(ApiError::new(ApiErrorKind::RateLimitExceeded {
             retry_after_seconds,
         })
@@ -94,6 +96,7 @@ pub async fn enforce(
             .with_request_id(Some(user.request_id.clone()))
         })?;
     if quota_exhausted {
+        record_event(&state, &user, event_type::QUOTA_EXCEEDED, endpoint);
         return Err(ApiError::new(ApiErrorKind::QuotaExceeded)
             .with_request_id(Some(user.request_id.clone())));
     }
@@ -193,6 +196,26 @@ async fn record_usage(
         },
     )
     .await;
+    record_event(
+        state,
+        user,
+        analytics::event_for_endpoint(endpoint),
+        endpoint,
+    );
+}
+
+/// Fire-and-forget analytics event with the request id attached.
+fn record_event(state: &AppState, user: &UserContext, event: &'static str, endpoint: &'static str) {
+    analytics::record_spawn(
+        &state.db,
+        analytics::AnalyticsEvent {
+            user_id: Some(user.user_id),
+            event_type: event,
+            request_id: uuid::Uuid::parse_str(&user.request_id).ok(),
+            endpoint: Some(endpoint),
+            metadata: None,
+        },
+    );
 }
 
 #[cfg(test)]
