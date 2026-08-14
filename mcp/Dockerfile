@@ -1,5 +1,5 @@
 # ---- Builder stage ----
-# Build context must be the repository root (workspace): docker build -f backend/Dockerfile .
+# Build context must be the repository root (workspace): docker build -f mcp/Dockerfile .
 FROM rust:1-slim-bookworm AS builder
 
 WORKDIR /usr/src/weave
@@ -13,7 +13,7 @@ RUN mkdir -p backend/src mcp/src crates/weave-core/src \
     && printf 'fn main() {}\n' > backend/src/main.rs \
     && printf 'fn main() {}\n' > mcp/src/main.rs \
     && printf '\n' > crates/weave-core/src/lib.rs \
-    && cargo build --release -p weave-api \
+    && cargo build --release -p weave-mcp --features http \
     && rm -rf backend/src mcp/src crates/weave-core/src
 
 # Build the real binary (all workspace members are present).
@@ -22,7 +22,7 @@ RUN mkdir -p backend/src mcp/src crates/weave-core/src \
 # unchanged.
 COPY . .
 RUN find crates/weave-core/src mcp/src backend/src -name '*.rs' -print0 2>/dev/null | xargs -0 touch \
-    && cargo build --release -p weave-api
+    && cargo build --release -p weave-mcp --features http
 
 # ---- Runtime stage ----
 FROM debian:bookworm-slim AS runtime
@@ -34,12 +34,13 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 weave
 
 WORKDIR /app
-COPY --from=builder /usr/src/weave/target/release/weave-api /usr/local/bin/weave-api
+COPY --from=builder /usr/src/weave/target/release/weave-mcp /usr/local/bin/weave-mcp
 
 USER weave
-EXPOSE 3001
+EXPOSE 8010
 
-# LLM provider configuration is injected at runtime:
-#   OPENCODE_BASE_URL, OPENCODE_MODEL, OPENCODE_API_KEY (unset => mock mode)
-#   DATABASE_URL, REDIS_URL (required — see backend/.env.example)
-CMD ["weave-api"]
+# Transport is selected at runtime:
+#   WEAVE_MCP_TRANSPORT=stdio|http   (default: stdio)
+#   WEAVE_MCP_HTTP_ADDR=0.0.0.0:8010
+#   WEAVE_MCP_DATABASE_URL, WEAVE_MCP_DATA_DIR, OPENCODE_* (LLM)
+CMD ["weave-mcp"]

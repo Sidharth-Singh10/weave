@@ -1,0 +1,21 @@
+# VCS
+.git/
+
+# JavaScript / frontend (not needed to build the Rust binaries)
+node_modules/
+frontend/
+.next/
+out/
+package.json
+package-lock.json
+
+# Rust build output
+target/
+**/target/
+
+# Docs (not needed at build time)
+*.md
+
+# Env / secrets (never baked into images)
+.env
+*.env
