@@ -169,6 +169,59 @@ Claude Desktop:
 
 See [`mcp/README.md`](mcp/README.md) for full setup, schema, and tests.
 
+### Containerized deployment (Streamable HTTP)
+
+The full stack can run as containers on a shared Docker network (`weave_net`).
+In this mode `weave-mcp` serves the **Streamable HTTP** MCP endpoint at `/mcp`
+instead of stdio, so MCP clients do not need the binary on disk — any agent
+container (or the host) just points its `url` at the endpoint:
+
+```bash
+docker compose -f docker-compose.infra.yml up -d --build
+```
+
+| Service | Container port | Host |
+|---|---|---|
+| postgres (pgvector) | 5432 | 127.0.0.1:5433 |
+| redis | 6379 | — |
+| weave-mcp (asuna) | 8010 | 0.0.0.0:8010 (`/mcp`) |
+| weave-mcp-harshit | 8011 | 0.0.0.0:8011 (`/mcp`) |
+| weave-api | 3001 | 0.0.0.0:5000 |
+
+**Per-agent isolation.** Each agent gets its own `weave-mcp` instance with its
+own database and data volume, so no agent can read another's notes/files. The
+default stack ships two: `weave-mcp` (DB `weave_mcp`, volume `weave_mcp_data`)
+and `weave-mcp-harshit` (DB `weave_mcp_harshit`, volume `weave_mcp_harshit_data`).
+To add another agent, copy the `weave-mcp-harshit` service block in
+`docker-compose.infra.yml` and give it a unique `container_name`, port, database
+name, and data volume; the database is auto-created on first start.
+
+Connecting agents:
+
+- **Host-native agent** (Hermes gateway, Claude Desktop, …) — point at the
+  published port of *its* instance:
+  ```yaml
+  mcp_servers:
+    weave: { url: http://127.0.0.1:8010/mcp }
+  ```
+- **Agent running in a container** — join it to `weave_net` and use the service
+  name of *its* instance (no host-IP dependency):
+  ```bash
+  docker network connect weave_net <agent-container>
+  ```
+  ```yaml
+  mcp_servers:
+    weave: { url: http://weave-mcp-harshit:8011/mcp }
+  ```
+  Then restart the agent's gateway (`hermes gateway restart`) so it re-runs MCP
+  discovery; verify with `hermes mcp test weave` / `hermes mcp list`.
+
+`weave-mcp` selects its transport via `WEAVE_MCP_TRANSPORT` (`stdio` default |
+`http`) and binds to `WEAVE_MCP_HTTP_ADDR`. The container image is built with
+the `http` feature. `WEAVE_MCP_ALLOWED_HOSTS` optionally restricts accepted
+`Host` headers; unset means the server answers any host so service-name and
+gateway-IP clients both work.
+
 ## Getting Started
 
 Requirements: Node.js 20+, Rust (edition 2024), Docker (for PostgreSQL + Redis).
