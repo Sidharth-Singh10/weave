@@ -14,6 +14,7 @@ Weave is an AI-powered knowledge graph application. You type plain-language note
 - **Rate limits & quotas** — Redis-backed request/token/concurrency limits with global defaults, role policies, user overrides, and hard ceilings.
 - **Usage metering** — every LLM operation records provider tokens, latency, and endpoint.
 - **Analytics** — product/operational analytics events and an admin dashboard (users, roles, policies, usage, analytics, audit log).
+- **AI assistant memory (MCP server)** — `weave-mcp` gives any MCP agent (Hermes, Claude Desktop, Codex) a persistent knowledge/memory store: notes with compact LLM summaries, a server-owned knowledge graph, file storage, and GraphRAG retrieval.
 - **Adaptive visualization (Iteration 2)**
   - **Importance** — hub nodes are visually prominent (degree centrality).
   - **Progressive disclosure** — click a node to focus its neighborhood; a breadcrumb returns you to the full graph.
@@ -75,8 +76,98 @@ Browser → Next.js (:3000) ──/api, /auth──▶ weave-api (:3001) ──�
 |---|---|
 | Frontend | Next.js 16 (App Router), React 19, Zustand, React Flow (`@xyflow/react`), Tailwind CSS v4, Motion |
 | Backend | Rust, Axum, Tokio, sqlx (PostgreSQL), redis, oauth2/openidconnect, serde, reqwest (rustls) |
+| MCP server | Rust, `rmcp` (stdio), sqlx + pgvector, fastembed (optional local embeddings) — `weave-mcp` |
+| Shared | `crates/weave-core` — the OpenAI-compatible LLM client + text→graph extractor used by both `weave-api` and `weave-mcp` |
 | State | PostgreSQL (users, roles, sessions, policies, usage, analytics, audit) · Redis (rate-limit/token/concurrency counters, OAuth state) |
 | LLM | OpenAI-compatible provider via `OPENCODE_BASE_URL` (no key → deterministic mock extractor) |
+
+## MCP Server (weave-mcp)
+
+`weave-mcp` is a personal **knowledge / memory server** for AI assistants. Any
+MCP agent (Hermes, Claude Desktop, Codex, …) connects over stdio and uses the
+tools to store notes, files, and a **server-owned** knowledge graph — then
+retrieve exactly the context it needs on demand, so the agent's own context
+window stays small.
+
+### Topology
+
+```
+ MCP agent (Hermes / Claude Desktop / Codex)
+        │  MCP protocol over stdio (JSON-RPC)
+        ▼
+ ┌────────────────────────── weave-mcp (mcp/) ─────────────────────────┐
+ │  server.rs  (MemoryServer + 9 tools)                                │
+ │      │             │               │                                │
+ │  ingest.rs       recall.rs       graph.rs      (business logic)     │
+ │      │             │               │                                │
+ │   store.rs ───── SQL ──▶ PostgreSQL "weave_mcp" (notes, entities,   │
+ │   files.rs ─── blobs ──▶ data/       relations, documents,          │
+ │   embed.rs ── vectors ──▶ pgvector    provenance, pgvector)         │
+ │   summary.rs / weave-core ── LLM (shared with weave-api)            │
+ └─────────────────────────────────────────────────────────────────────┘
+```
+
+Unlike the web app's **client-owned** graph (in the browser), `weave-mcp` keeps
+a **server-owned** graph in PostgreSQL — the persistent memory an agent can read
+and write programmatically. The `weave_mcp` database is created automatically on
+first run; files are stored as hash-keyed blobs under `WEAVE_MCP_DATA_DIR`.
+
+### What it stores
+
+- **Notes/memories** — full text plus a compact LLM **summary** per note. That
+  summary is the token-saving mechanism: `recall_memory` returns a compact
+  context block, and `get_note` fetches full text only on demand.
+- **Knowledge graph** — each note is extracted into entities + relations,
+  resolved against the persisted graph (no duplicate concepts), with
+  provenance linking notes → nodes/edges.
+- **Files** — documents, PDFs, images, audio stored on disk with metadata;
+  text is extracted for text-ish files and ingested into the graph.
+- **Embeddings + full-text** — pgvector cosine vectors and a Postgres FTS
+  `tsvector` on every note/entity, powering GraphRAG retrieval.
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `remember(text, kind?, tags?)` | Store a note/memory; extract + persist entities/relations; returns added items + summary |
+| `add_file(path, description?)` | Store a file on disk, extract text, ingest into the graph |
+| `list_notes(limit?, tag?, kind?)` | Browse note summaries, newest first |
+| `get_note(id)` | Full note content + the entities/relations it created |
+| `delete_note(id)` | Delete a note |
+| `search(query, limit?)` | Full-text notes + keyword entities |
+| `get_node(label)` | An entity and the relations touching it |
+| `get_related(label, depth?)` | BFS subgraph around an entity (up to depth 3) |
+| `recall_memory(query, top_k?)` | **Flagship**: hybrid retrieval (vector + FTS + graph) → compact context block |
+
+### How to use
+
+```bash
+docker compose up -d          # postgres (pgvector) + redis
+cd mcp
+cp .env.example .env          # optional — defaults match docker compose
+cargo run                     # weave-mcp, ready on stdio
+```
+
+The default build uses a deterministic stub embedder so retrieval works offline;
+build with `--features embedding` to enable local semantic vectors (fastembed,
+model downloaded on first use). Point any MCP client at the binary, e.g. for
+Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "weave": {
+      "command": "/path/to/weave/mcp/target/debug/weave-mcp",
+      "env": {
+        "WEAVE_MCP_DATABASE_URL": "postgres://weave:weave@localhost:5432/weave_mcp",
+        "WEAVE_MCP_DATA_DIR": "/path/to/weave/mcp/data"
+      }
+    }
+  }
+}
+```
+
+See [`mcp/README.md`](mcp/README.md) for full setup, schema, and tests.
 
 ## Getting Started
 
@@ -85,7 +176,7 @@ Requirements: Node.js 20+, Rust (edition 2024), Docker (for PostgreSQL + Redis).
 ### 1. Infrastructure
 
 ```bash
-docker compose up -d          # postgres:16 + redis:7
+docker compose up -d          # postgres (pgvector) + redis
 ```
 
 ### 2. Backend
@@ -107,6 +198,17 @@ npm run dev                   # Next.js on http://localhost:3000
 Open http://localhost:3000/app. Without Google OAuth credentials set, use the
 "Continue with a test account" button on the login page (enabled by
 `AUTH_STUB=true` in `backend/.env`, dev/test only).
+
+### 4. MCP server (optional)
+
+```bash
+cd mcp
+cp .env.example .env          # optional — defaults match docker compose
+cargo run                     # weave-mcp, ready on stdio
+# build with --features embedding for local semantic vectors
+```
+
+Then connect any MCP agent (see [MCP Server](#mcp-server-weave-mcp)).
 
 ## Authentication
 
@@ -226,13 +328,17 @@ npm run build    # frontend production build
 npm run lint     # frontend ESLint
 cd backend && cargo test          # backend unit + integration tests
 cd frontend && npx playwright test  # e2e (requires docker compose up -d)
+cargo test --workspace            # backend + weave-core + mcp tests
 ```
 
 ## Project Layout
 
 ```
-backend/                Rust API (axum) — auth, admin, rate limiting, usage, analytics, extract, organize, llm
+backend/                Rust API (axum) — auth, admin, rate limiting, usage, analytics, organize
 backend/migrations/     sqlx migrations (schema + seed data)
+crates/weave-core/      shared library — LLM client, graph models, extractor (used by backend + mcp)
+mcp/                    weave-mcp — personal knowledge/memory MCP server (stdio)
+mcp/migrations/         sqlx migrations for the weave_mcp database (notes, entities, relations, documents, embeddings)
 frontend/src/app/       Next.js pages (/ landing, /app canvas, /login, /admin/*)
 frontend/src/components/canvas/   CanvasApp, WeaveNode, CanvasHeader, InputDock, InsightsPanel
 frontend/src/components/auth/     RequireAuth, RequireAdmin, UserMenu
