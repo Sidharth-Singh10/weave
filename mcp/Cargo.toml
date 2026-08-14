@@ -9,9 +9,16 @@ default = []
 # and downloads an embedding model on first use. Without it, a deterministic
 # stub embedder keeps the retrieval pipeline working (no semantic similarity).
 embedding = ["dep:fastembed"]
+# Streamable HTTP transport (served at /mcp). Required for containerized
+# deployments so remote MCP clients (Hermes gateways, ...) can connect over
+# HTTP instead of launching the binary over stdio. Enabled together with the
+# `transport-streamable-http-server` rmcp feature (which also pulls in session
+# management).
+http = ["rmcp/transport-streamable-http-server", "dep:axum"]
 
 [dependencies]
 rmcp = { version = "3", features = ["server", "macros", "schemars", "transport-io"] }
+axum = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -30,4 +37,4 @@ fastembed = { version = "5", features = ["hf-hub"], optional = true }
 weave-core = { path = "../crates/weave-core" }
 
 [dev-dependencies]
-rmcp = { version = "3", features = ["client", "transport-child-process", "schemars"] }
+rmcp = { version = "3", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "schemars"] }
