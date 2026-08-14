@@ -83,6 +83,28 @@ pub struct DeleteNoteArgs {
     pub id: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchArgs {
+    #[schemars(description = "Search query")]
+    pub query: String,
+    #[schemars(description = "Max results (1-100)")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetNodeArgs {
+    #[schemars(description = "Entity label to look up")]
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetRelatedArgs {
+    #[schemars(description = "Seed entity label")]
+    pub label: String,
+    #[schemars(description = "Hop depth to expand (1-3)")]
+    pub depth: Option<usize>,
+}
+
 fn parse_id(raw: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(raw.trim())
         .map_err(|_| McpError::invalid_params("invalid note id (expected UUID)", None))
@@ -246,6 +268,82 @@ impl MemoryServer {
             Ok(format!("Deleted note {id}."))
         } else {
             Ok(format!("Note {id} not found."))
+        }
+    }
+
+    /// Search notes (full-text) and entities (keyword). Returns matching notes
+    /// with their summaries and matching entities.
+    #[tool(description = "Search notes and entities by keyword")]
+    async fn search(&self, Parameters(args): Parameters<SearchArgs>) -> Result<String, McpError> {
+        let query = args.query.trim();
+        if query.is_empty() {
+            return Err(McpError::invalid_params("query must not be empty", None));
+        }
+        let notes = store::search_notes(&self.pool, query, args.limit.unwrap_or(10))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        let entities = store::search_entities(&self.pool, query, args.limit.unwrap_or(10))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+
+        let note_view: Vec<serde_json::Value> = notes
+            .iter()
+            .map(|n| {
+                json!({
+                    "id": n.id,
+                    "summary": n.summary,
+                    "content": n.content,
+                    "kind": n.kind,
+                    "tags": n.tags,
+                    "created_at": n.created_at,
+                })
+            })
+            .collect();
+
+        Ok(self.result_json(&json!({
+            "notes": note_view,
+            "entities": entities,
+        })))
+    }
+
+    /// Resolve an entity by label and return it with its immediate relations.
+    #[tool(description = "Get an entity and the relations touching it")]
+    async fn get_node(
+        &self,
+        Parameters(args): Parameters<GetNodeArgs>,
+    ) -> Result<String, McpError> {
+        let label = args.label.trim();
+        if label.is_empty() {
+            return Err(McpError::invalid_params("label must not be empty", None));
+        }
+        match crate::graph::get_node(&self.pool, label)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?
+        {
+            Some(view) => Ok(self.result_json(&view)),
+            None => Ok(format!("Entity \"{label}\" not found.")),
+        }
+    }
+
+    /// Expand the subgraph around an entity up to `depth` hops.
+    #[tool(description = "Get the subgraph around an entity (BFS expansion)")]
+    async fn get_related(
+        &self,
+        Parameters(args): Parameters<GetRelatedArgs>,
+    ) -> Result<String, McpError> {
+        let label = args.label.trim();
+        if label.is_empty() {
+            return Err(McpError::invalid_params("label must not be empty", None));
+        }
+        match crate::graph::get_related(&self.pool, label, args.depth.unwrap_or(1))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?
+        {
+            Some(sub) => Ok(self.result_json(&json!({
+                "nodes": sub.entities,
+                "edges": sub.edges,
+            }))),
+            None => Ok(format!("Entity \"{label}\" not found.")),
         }
     }
 }

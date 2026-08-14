@@ -303,6 +303,110 @@ pub async fn relations_for_note(
 }
 
 // ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/// Full-text search over notes (summaries weighted higher), newest first on
+/// ties.
+pub async fn search_notes(
+    pool: &PgPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Note>, sqlx::Error> {
+    let limit = limit.clamp(1, 100);
+    sqlx::query_as::<_, Note>(
+        r#"
+        SELECT id, content, summary, kind, tags, importance, source, metadata, created_at, updated_at
+        FROM notes
+        WHERE search @@ websearch_to_tsquery('english', $1)
+        ORDER BY ts_rank(search, websearch_to_tsquery('english', $1)) DESC, created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(query)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Keyword match on entity labels/aliases/kind.
+pub async fn search_entities(
+    pool: &PgPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Entity>, sqlx::Error> {
+    let limit = limit.clamp(1, 100);
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities
+        WHERE strpos(lower(label), $1) > 0
+           OR strpos(lower(COALESCE(description, '')), $1) > 0
+        ORDER BY label
+        LIMIT $2
+        "#,
+    )
+    .bind(query.to_lowercase())
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Graph traversal
+// ---------------------------------------------------------------------------
+
+pub async fn get_entity_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Entity>, sqlx::Error> {
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// All relations touching an entity (either direction), with endpoint labels.
+pub async fn relations_for_entity(
+    pool: &PgPool,
+    entity_id: Uuid,
+) -> Result<Vec<RelationView>, sqlx::Error> {
+    sqlx::query_as::<_, RelationView>(
+        r#"
+        SELECT r.id AS relation_id, r.relation,
+               e1.label AS source_label, e2.label AS target_label,
+               r.source_id, r.target_id
+        FROM relations r
+        JOIN entities e1 ON e1.id = r.source_id
+        JOIN entities e2 ON e2.id = r.target_id
+        WHERE r.source_id = $1 OR r.target_id = $1
+        ORDER BY r.relation
+        "#,
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Entities by a set of ids, preserving the given order.
+pub async fn entities_by_ids(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<Entity>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities WHERE id = ANY($1)
+        "#,
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await
+}
+
+// ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------
 

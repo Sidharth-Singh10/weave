@@ -7,6 +7,7 @@
 pub mod config;
 pub mod db;
 pub mod files;
+pub mod graph;
 pub mod ingest;
 pub mod models;
 pub mod server;

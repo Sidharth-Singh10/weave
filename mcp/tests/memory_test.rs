@@ -184,6 +184,77 @@ async fn recall_roundtrip_via_mcp_protocol() {
         .join("\n");
     assert!(note_text.contains("Hermione"));
 
+    // --- Phase 2: retrieval tools ---------------------------------------
+    // search finds the note by full-text match.
+    let search = client
+        .call_tool(
+            CallToolRequestParams::new("search").with_arguments(rmcp::object!({
+                "query": "Hogwarts",
+            })),
+        )
+        .await
+        .expect("call search");
+    let search_text: String = search
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            ContentBlock::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        search_text.contains("Hermione"),
+        "search should find the note: {search_text}"
+    );
+
+    // get_node resolves the entity and its relations.
+    let node = client
+        .call_tool(
+            CallToolRequestParams::new("get_node").with_arguments(rmcp::object!({
+                "label": "Hermione",
+            })),
+        )
+        .await
+        .expect("call get_node");
+    let node_text: String = node
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            ContentBlock::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        node_text.contains("Hogwarts"),
+        "get_node should show relations: {node_text}"
+    );
+
+    // get_related expands the neighborhood.
+    let related = client
+        .call_tool(
+            CallToolRequestParams::new("get_related").with_arguments(rmcp::object!({
+                "label": "Hermione",
+                "depth": 1,
+            })),
+        )
+        .await
+        .expect("call get_related");
+    let related_text: String = related
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            ContentBlock::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        related_text.contains("Hogwarts"),
+        "get_related should expand: {related_text}"
+    );
+
     // Cleanup.
     client
         .call_tool(
