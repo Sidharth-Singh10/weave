@@ -1,0 +1,138 @@
+# Production-style deployment for Weave.
+#
+# Runs the full stack as containers on a dedicated `weave_net` bridge so that
+# any MCP client container (Hermes gateway, future agents) can join the network
+# and reach the MCP server at http://weave-mcp:8010/mcp by service name.
+#
+#   docker compose -f docker-compose.infra.yml up -d --build
+#
+# LLM provider settings (OPENCODE_*) are read from a gitignored `.env` in this
+# directory (docker compose interpolates it automatically). Unset => mock mode.
+#
+# Per-agent isolation: each agent gets its own weave-mcp instance (own DB +
+# data volume) so no agent can read another's notes/files. To add another
+# agent, copy the `weave-mcp-harshit` service block and give it a unique
+# container_name, port, database name, and data volume.
+name: weave
+
+# Shared weave-mcp environment. Per-instance values (WEAVE_MCP_HTTP_ADDR,
+# WEAVE_MCP_DATABASE_URL) are set on each service.
+x-weave-mcp-env: &weave-mcp-env
+  WEAVE_MCP_TRANSPORT: http
+  WEAVE_MCP_DATA_DIR: /data
+  OPENCODE_BASE_URL: ${OPENCODE_BASE_URL:-https://opencode.ai/zen/go/v1}
+  OPENCODE_MODEL: ${OPENCODE_MODEL:-deepseek-v4-flash}
+  OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: weave-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: weave
+      POSTGRES_PASSWORD: weave
+      POSTGRES_DB: weave
+    # Host port moved to 5433 (5432 is taken by rjagro_postgres).
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - weave_pg:/var/lib/postgresql/data
+    networks:
+      - weave_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weave -d weave"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: weave-redis
+    restart: unless-stopped
+    volumes:
+      - weave_redis:/data
+    networks:
+      - weave_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # asuna's agent store — host hermes points at http://127.0.0.1:8010/mcp
+  weave-mcp:
+    build:
+      context: .
+      dockerfile: mcp/Dockerfile
+    image: weave-mcp:local
+    container_name: weave-mcp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *weave-mcp-env
+      WEAVE_MCP_HTTP_ADDR: 0.0.0.0:8010
+      WEAVE_MCP_DATABASE_URL: postgres://weave:weave@postgres:5432/weave_mcp
+    ports:
+      - "8010:8010"
+    volumes:
+      - weave_mcp_data:/data
+    networks:
+      - weave_net
+
+  # hermes-harshit's agent store — container points at http://weave-mcp-harshit:8011/mcp
+  weave-mcp-harshit:
+    image: weave-mcp:local
+    container_name: weave-mcp-harshit
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *weave-mcp-env
+      WEAVE_MCP_HTTP_ADDR: 0.0.0.0:8011
+      WEAVE_MCP_DATABASE_URL: postgres://weave:weave@postgres:5432/weave_mcp_harshit
+    ports:
+      - "8011:8011"
+    volumes:
+      - weave_mcp_harshit_data:/data
+    networks:
+      - weave_net
+
+  weave-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: weave-api:local
+    container_name: weave-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://weave:weave@postgres:5432/weave
+      REDIS_URL: redis://redis:6379
+      OPENCODE_BASE_URL: ${OPENCODE_BASE_URL:-https://opencode.ai/zen/go/v1}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-deepseek-v4-flash}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      FRONTEND_URL: http://localhost:3000
+      RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE: 30
+      RATE_LIMIT_DEFAULT_TOKENS_PER_DAY: 500000
+    ports:
+      - "5000:3001"
+    networks:
+      - weave_net
+
+networks:
+  weave_net:
+    name: weave_net
+
+volumes:
+  weave_pg:
+  weave_redis:
+  weave_mcp_data:
+  weave_mcp_harshit_data:
