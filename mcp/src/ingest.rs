@@ -14,14 +14,16 @@ use weave_core::extract;
 use weave_core::llm::OpenCodeClient;
 use weave_core::models::{GraphNode, IngestRequest};
 
+use crate::embed::Embedder;
 use crate::models::{Entity, IngestResult};
 use crate::store;
 
 /// Ingest a note: summarize, persist the note, extract + resolve entities and
-/// relations, and record provenance.
+/// relations, record provenance, and embed the note and new entities.
 pub async fn ingest_note(
     pool: &PgPool,
     llm: &Arc<OpenCodeClient>,
+    embedder: &Arc<dyn Embedder>,
     content: &str,
     kind: &str,
     tags: &[String],
@@ -43,6 +45,15 @@ pub async fn ingest_note(
         source_document_id,
     )
     .await?;
+
+    // Embed the note (summary + content) best-effort.
+    let embed_text = match &summary {
+        Some(s) => format!("{s}\n{content}"),
+        None => content.to_string(),
+    };
+    if let Ok(embedding) = embedder.embed(&embed_text) {
+        let _ = store::set_note_embedding(pool, note.id, &embedding).await;
+    }
 
     // Existing entities the note mentions — passed to the LLM as context so it
     // reuses existing labels.
@@ -82,7 +93,7 @@ pub async fn ingest_note(
         let entity = if let Some(existing) = by_label.get(&key) {
             existing.clone()
         } else {
-            let created = store::get_or_create_entity(pool, &node.label, &node.kind).await?;
+            let created = create_entity(pool, embedder, &node.label, &node.kind).await?;
             entities_added.push(node.label.clone());
             by_label.insert(key.clone(), created.clone());
             created
@@ -101,7 +112,7 @@ pub async fn ingest_note(
         let source = if let Some(e) = by_label.get(&source_key) {
             e.clone()
         } else {
-            let created = store::get_or_create_entity(pool, &edge.source_label, "concept").await?;
+            let created = create_entity(pool, embedder, &edge.source_label, "concept").await?;
             entities_added.push(edge.source_label.clone());
             by_label.insert(source_key.clone(), created.clone());
             created
@@ -109,7 +120,7 @@ pub async fn ingest_note(
         let target = if let Some(e) = by_label.get(&target_key) {
             e.clone()
         } else {
-            let created = store::get_or_create_entity(pool, &edge.target_label, "concept").await?;
+            let created = create_entity(pool, embedder, &edge.target_label, "concept").await?;
             entities_added.push(edge.target_label.clone());
             by_label.insert(target_key.clone(), created.clone());
             created
@@ -157,14 +168,39 @@ pub async fn ingest_note(
     })
 }
 
+/// Create an entity (best-effort embedding of its label).
+async fn create_entity(
+    pool: &PgPool,
+    embedder: &Arc<dyn Embedder>,
+    label: &str,
+    kind: &str,
+) -> Result<Entity, anyhow::Error> {
+    let entity = store::get_or_create_entity(pool, label, kind).await?;
+    if let Ok(embedding) = embedder.embed(label) {
+        let _ = store::set_entity_embedding(pool, entity.id, &embedding).await;
+    }
+    Ok(entity)
+}
+
 /// Ingest the extracted text of a stored document as a `file`-sourced note.
 pub async fn ingest_document_text(
     pool: &PgPool,
     llm: &Arc<OpenCodeClient>,
+    embedder: &Arc<dyn Embedder>,
     document_id: Uuid,
     text: &str,
 ) -> Result<IngestResult, anyhow::Error> {
-    ingest_note(pool, llm, text, "note", &[], "file", Some(document_id)).await
+    ingest_note(
+        pool,
+        llm,
+        embedder,
+        text,
+        "note",
+        &[],
+        "file",
+        Some(document_id),
+    )
+    .await
 }
 
 #[cfg(test)]

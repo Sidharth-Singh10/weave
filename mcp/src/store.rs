@@ -406,6 +406,104 @@ pub async fn entities_by_ids(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<Entity>,
     .await
 }
 
+/// Notes that reference an entity (provenance), newest first.
+pub async fn notes_for_entity(
+    pool: &PgPool,
+    entity_id: Uuid,
+    limit: i64,
+) -> Result<Vec<Note>, sqlx::Error> {
+    let limit = limit.clamp(1, 50);
+    sqlx::query_as::<_, Note>(
+        r#"
+        SELECT n.id, n.content, n.summary, n.kind, n.tags, n.importance, n.source, n.metadata,
+               n.created_at, n.updated_at
+        FROM note_entities ne
+        JOIN notes n ON n.id = ne.note_id
+        WHERE ne.entity_id = $1
+        ORDER BY n.created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(entity_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Embeddings
+// ---------------------------------------------------------------------------
+
+pub async fn set_note_embedding(
+    pool: &PgPool,
+    id: Uuid,
+    embedding: &[f32],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE notes SET embedding = $1 WHERE id = $2")
+        .bind(pgvector::Vector::from(embedding.to_vec()))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_entity_embedding(
+    pool: &PgPool,
+    id: Uuid,
+    embedding: &[f32],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE entities SET embedding = $1 WHERE id = $2")
+        .bind(pgvector::Vector::from(embedding.to_vec()))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Notes nearest to `embedding` by cosine distance.
+pub async fn vector_search_notes(
+    pool: &PgPool,
+    embedding: &[f32],
+    limit: i64,
+) -> Result<Vec<Note>, sqlx::Error> {
+    let limit = limit.clamp(1, 100);
+    sqlx::query_as::<_, Note>(
+        r#"
+        SELECT id, content, summary, kind, tags, importance, source, metadata, created_at, updated_at
+        FROM notes
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <=> $1::vector
+        LIMIT $2
+        "#,
+    )
+    .bind(pgvector::Vector::from(embedding.to_vec()))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Entities nearest to `embedding` by cosine distance.
+pub async fn vector_search_entities(
+    pool: &PgPool,
+    embedding: &[f32],
+    limit: i64,
+) -> Result<Vec<Entity>, sqlx::Error> {
+    let limit = limit.clamp(1, 100);
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <=> $1::vector
+        LIMIT $2
+        "#,
+    )
+    .bind(pgvector::Vector::from(embedding.to_vec()))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------

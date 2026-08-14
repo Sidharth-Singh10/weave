@@ -8,8 +8,8 @@ use std::sync::Arc;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use weave_mcp::config::Config;
-use weave_mcp::db;
 use weave_mcp::server::MemoryServer;
+use weave_mcp::{db, embed};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,13 +25,14 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let pool = db::ensure_and_migrate(&config.database_url).await?;
     let llm = Arc::new(weave_core::llm::OpenCodeClient::from_env());
+    let embedder = embed::build_embedder();
 
     tracing::info!(
         llm_mode = if llm.available() { "opencode" } else { "mock" },
         "weave-mcp starting"
     );
 
-    let service = MemoryServer::new(pool, Arc::new(config), llm);
+    let service = MemoryServer::new(pool, Arc::new(config), llm, embedder);
     let server = service.serve(stdio()).await?;
     tracing::info!("weave-mcp ready on stdio");
     server.waiting().await?;

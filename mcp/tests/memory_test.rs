@@ -8,11 +8,15 @@
 use std::sync::Arc;
 
 use weave_core::llm::OpenCodeClient;
-use weave_mcp::{db, ingest, store};
+use weave_mcp::{db, embed, ingest, store};
 
 /// Serializes DB-backed integration tests so they cannot corrupt each other's
 /// fixtures (they share the `weave_mcp` database).
 static DB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn stub_embedder() -> Arc<dyn embed::Embedder> {
+    Arc::new(embed::StubEmbedder)
+}
 
 /// Resolve the mcp database URL: `WEAVE_MCP_DATABASE_URL` wins, else
 /// `DATABASE_URL` with the database swapped to `weave_mcp`.
@@ -39,10 +43,12 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
         return;
     };
     let llm = Arc::new(OpenCodeClient::mock());
+    let embedder = stub_embedder();
 
     let result = ingest::ingest_note(
         &pool,
         &llm,
+        &embedder,
         "PerOXO uses Rust and ScyllaDB.",
         "note",
         &["work".to_string()],
@@ -71,6 +77,15 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
     assert_eq!(note.content, "PerOXO uses Rust and ScyllaDB.");
     assert_eq!(note.tags, vec!["work"]);
 
+    // The note was embedded (pgvector column written).
+    let embedded: bool =
+        sqlx::query_scalar("SELECT embedding IS NOT NULL FROM notes WHERE id = $1")
+            .bind(result.note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(embedded, "note embedding must be persisted");
+
     // Provenance: the note references the extracted entities.
     let entities = store::entities_for_note(&pool, result.note_id)
         .await
@@ -93,6 +108,7 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
     let again = ingest::ingest_note(
         &pool,
         &llm,
+        &embedder,
         "PerOXO uses Rust and ScyllaDB.",
         "note",
         &[],
@@ -253,6 +269,30 @@ async fn recall_roundtrip_via_mcp_protocol() {
     assert!(
         related_text.contains("Hogwarts"),
         "get_related should expand: {related_text}"
+    );
+
+    // --- Phase 3: hybrid recall ------------------------------------------
+    let recall = client
+        .call_tool(
+            CallToolRequestParams::new("recall_memory").with_arguments(rmcp::object!({
+                "query": "where does Hermione study",
+                "top_k": 3,
+            })),
+        )
+        .await
+        .expect("call recall_memory");
+    let recall_text: String = recall
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            ContentBlock::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        recall_text.contains("Relevant memories") && recall_text.contains("Hermione"),
+        "recall should return a context block: {recall_text}"
     );
 
     // Cleanup.

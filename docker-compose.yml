@@ -5,7 +5,7 @@
 #   cd backend && cargo run
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: weave
       POSTGRES_PASSWORD: weave

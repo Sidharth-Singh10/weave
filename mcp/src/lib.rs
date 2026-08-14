@@ -6,10 +6,12 @@
 
 pub mod config;
 pub mod db;
+pub mod embed;
 pub mod files;
 pub mod graph;
 pub mod ingest;
 pub mod models;
+pub mod recall;
 pub mod server;
 pub mod store;
 pub mod summary;

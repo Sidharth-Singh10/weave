@@ -13,6 +13,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::embed::Embedder;
 use crate::models::{IngestResult, RelationView};
 use crate::{files, ingest, store};
 use weave_core::llm::OpenCodeClient;
@@ -23,11 +24,22 @@ pub struct MemoryServer {
     pub pool: PgPool,
     pub config: Arc<Config>,
     pub llm: Arc<OpenCodeClient>,
+    pub embedder: Arc<dyn Embedder>,
 }
 
 impl MemoryServer {
-    pub fn new(pool: PgPool, config: Arc<Config>, llm: Arc<OpenCodeClient>) -> Self {
-        Self { pool, config, llm }
+    pub fn new(
+        pool: PgPool,
+        config: Arc<Config>,
+        llm: Arc<OpenCodeClient>,
+        embedder: Arc<dyn Embedder>,
+    ) -> Self {
+        Self {
+            pool,
+            config,
+            llm,
+            embedder,
+        }
     }
 
     fn result_json<T: serde::Serialize>(&self, value: &T) -> String {
@@ -105,6 +117,14 @@ pub struct GetRelatedArgs {
     pub depth: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RecallArgs {
+    #[schemars(description = "Query to recall memories for")]
+    pub query: String,
+    #[schemars(description = "Max memories to return (1-20)")]
+    pub top_k: Option<usize>,
+}
+
 fn parse_id(raw: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(raw.trim())
         .map_err(|_| McpError::invalid_params("invalid note id (expected UUID)", None))
@@ -133,9 +153,18 @@ impl MemoryServer {
         let kind = args.kind.as_deref().unwrap_or("note");
         let tags = args.tags.unwrap_or_default();
 
-        let result = ingest::ingest_note(&self.pool, &self.llm, &text, kind, &tags, "user", None)
-            .await
-            .map_err(|e| self.err(&e.to_string()))?;
+        let result = ingest::ingest_note(
+            &self.pool,
+            &self.llm,
+            &self.embedder,
+            &text,
+            kind,
+            &tags,
+            "user",
+            None,
+        )
+        .await
+        .map_err(|e| self.err(&e.to_string()))?;
         Ok(self.result_json(&result))
     }
 
@@ -182,10 +211,15 @@ impl MemoryServer {
 
         if let Some(text) = text {
             if !text.trim().is_empty() {
-                let ingested: IngestResult =
-                    ingest::ingest_document_text(&self.pool, &self.llm, document.id, &text)
-                        .await
-                        .map_err(|e| self.err(&e.to_string()))?;
+                let ingested: IngestResult = ingest::ingest_document_text(
+                    &self.pool,
+                    &self.llm,
+                    &self.embedder,
+                    document.id,
+                    &text,
+                )
+                .await
+                .map_err(|e| self.err(&e.to_string()))?;
                 result["ingested"] = json!({
                     "note_id": ingested.note_id,
                     "entities_added": ingested.entities_added,
@@ -345,5 +379,28 @@ impl MemoryServer {
             }))),
             None => Ok(format!("Entity \"{label}\" not found.")),
         }
+    }
+
+    /// Hybrid retrieval (vector + full-text + graph): recall the memories most
+    /// relevant to a query. Returns a compact context block plus structured
+    /// notes/entities/relations — the flagship "recall" tool.
+    #[tool(description = "Recall memories relevant to a query (GraphRAG hybrid retrieval)")]
+    async fn recall_memory(
+        &self,
+        Parameters(args): Parameters<RecallArgs>,
+    ) -> Result<String, McpError> {
+        let query = args.query.trim();
+        if query.is_empty() {
+            return Err(McpError::invalid_params("query must not be empty", None));
+        }
+        let result = crate::recall::recall_memory(
+            &self.pool,
+            &self.embedder,
+            query,
+            args.top_k.unwrap_or(5),
+        )
+        .await
+        .map_err(|e| self.err(&e.to_string()))?;
+        Ok(self.result_json(&result))
     }
 }
