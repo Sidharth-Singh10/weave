@@ -64,6 +64,14 @@ impl OpenCodeClient {
         }
     }
 
+    /// Build from the environment but force deterministic mock mode (no API
+    /// key), regardless of any `OPENCODE_API_KEY` that may be set.
+    pub fn mock() -> Self {
+        let mut client = Self::from_env();
+        client.api_key = None;
+        client
+    }
+
     pub fn available(&self) -> bool {
         self.api_key.is_some()
     }
