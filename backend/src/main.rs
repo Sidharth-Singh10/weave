@@ -5,10 +5,7 @@ mod auth;
 mod config;
 mod db;
 mod error;
-mod extract;
 mod graph;
-mod llm;
-mod models;
 mod organize;
 mod policy;
 mod ratelimit;
@@ -30,6 +27,7 @@ use axum::{
     routing::get,
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use weave_core::llm;
 
 use crate::auth::oauth::{GoogleOidc, OidcProvider, UnconfiguredOidc};
 use crate::config::Config;

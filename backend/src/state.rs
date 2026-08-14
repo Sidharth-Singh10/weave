@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::auth::oauth::OidcProvider;
 use crate::config::Config;
-use crate::llm::OpenCodeClient;
+use weave_core::llm::OpenCodeClient;
 
 #[derive(Clone)]
 pub struct AppState {

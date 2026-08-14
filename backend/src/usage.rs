@@ -4,8 +4,8 @@
 
 use uuid::Uuid;
 
-use crate::llm::TokenUsage;
 use crate::redis_store::Redis;
+use weave_core::llm::TokenUsage;
 
 pub struct UsageRecord {
     pub user_id: Uuid,

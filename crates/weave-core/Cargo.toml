@@ -1,0 +1,13 @@
+[package]
+name = "weave-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+regex = "1.13.1"
+anyhow = "1.0.104"
+tracing = "0.1"

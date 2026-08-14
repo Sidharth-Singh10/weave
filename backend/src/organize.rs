@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::llm::{OpenCodeClient, TokenUsage};
-use crate::models::{
+use weave_core::llm::{OpenCodeClient, TokenUsage};
+use weave_core::models::{
     GraphEdge, GraphNode, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
     OrganizeResult, SearchRequest, SearchResult,
 };

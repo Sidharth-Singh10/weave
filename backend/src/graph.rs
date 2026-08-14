@@ -16,13 +16,13 @@ use axum::{Json, Router};
 use crate::analytics::{self, event_type};
 use crate::auth::middleware::{AuthUser, UserContext, require_permission};
 use crate::error::{ApiError, ApiErrorKind};
-use crate::models::{
-    GraphDelta, IngestRequest, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
-    OrganizeResult, SearchRequest, SearchResult,
-};
 use crate::ratelimit;
 use crate::state::AppState;
 use crate::usage::{self, UsageRecord};
+use weave_core::models::{
+    GraphDelta, IngestRequest, LabelCommunityRequest, LabelCommunityResult, OrganizeRequest,
+    OrganizeResult, SearchRequest, SearchResult,
+};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -143,7 +143,7 @@ async fn ingest(
         )));
     }
     let start = std::time::Instant::now();
-    let (delta, usage) = crate::extract::extract_delta(&state.llm, &req).await;
+    let (delta, usage) = weave_core::extract::extract_delta(&state.llm, &req).await;
     record_usage(&state, &user, "graph.ingest", usage, start, 200).await;
     Ok(Json(delta))
 }
@@ -187,7 +187,7 @@ async fn record_usage(
     state: &AppState,
     user: &UserContext,
     endpoint: &'static str,
-    usage: Option<crate::llm::TokenUsage>,
+    usage: Option<weave_core::llm::TokenUsage>,
     start: std::time::Instant,
     status: i32,
 ) {
@@ -239,7 +239,7 @@ mod tests {
     use crate::auth::oauth::MockOidc;
     use crate::config::Config;
     use crate::db;
-    use crate::llm::OpenCodeClient;
+    use weave_core::llm::OpenCodeClient;
     use crate::redis_store::Redis;
 
     struct TestCtx {

@@ -421,7 +421,7 @@ mod tests {
 
     use crate::config::Config;
     use crate::db;
-    use crate::llm::OpenCodeClient;
+    use weave_core::llm::OpenCodeClient;
     use crate::redis_store::Redis;
     use crate::state::AppState;
 
