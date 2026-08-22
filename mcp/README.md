@@ -50,7 +50,8 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
 | `get_related(label, depth?)` | BFS subgraph around an entity (up to depth 3) |
 | `get_claim(id)` | One evidence-backed claim + its source note + contradictions |
 | `list_claims(entity_label, status?, limit?)` | Claims about an entity, filtered by status |
-| `recall_memory(query, top_k?)` | **Flagship**: hybrid retrieval → compact context block (summaries + subgraph) |
+| `reindex_embeddings(limit?)` | Re-embed rows whose vectors are missing or from an older model |
+| `recall_memory(query, top_k?)` | **Flagship**: hybrid retrieval → compact context block (summaries + subgraph + claims) |
 
 ## Setup
 
@@ -66,14 +67,23 @@ cargo run                            # weave-mcp, ready on stdio
 
 The `weave_mcp` database is created automatically on first run.
 
-### Real embeddings (optional)
+### Real embeddings
 
-The default build uses a deterministic stub embedder so the retrieval pipeline
-works offline; semantic similarity requires the local ONNX model:
+The containerized build compiles with the `embedding` feature: local ONNX
+embeddings (`BAAI/bge-small-en-v1.5`, 384-dim) via fastembed, downloaded once
+into `HF_HOME` (`/data/hf` in the container) and cached in the data volume.
+If the model cannot load, the server falls back to a deterministic stub
+embedder and disables the semantic retrieval layer (lexical + graph still
+work).
 
-```bash
-cargo run --features embedding       # downloads bge-small-en-v1.5 on first use
-```
+- **Semantic retrieval** powers write-time grounding and `recall_memory`:
+  candidate union = lexical (mention/keyword) + semantic similarity + 1-hop
+  graph expansion, with an explainable score and per-candidate reasons.
+- Every vector is stamped with the producing model (`embedding_model`), so
+  `reindex_embeddings` can rebuild stale indexes safely.
+
+Local dev builds without the feature use the stub embedder:
+`cargo run` (stub) vs `cargo run --features embedding` (local ONNX).
 
 ### LLM provider
 

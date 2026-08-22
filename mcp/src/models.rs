@@ -118,6 +118,9 @@ pub struct IngestResult {
     pub claims_quarantined: i64,
     pub claims_rejected: i64,
     pub contradictions_detected: i64,
+    /// Candidate anchors selected by hybrid retrieval, with explainable
+    /// scores/reasons (why each entity was offered to the extractor).
+    pub retrieval: Vec<crate::retrieval::RetrievalCandidate>,
     pub total_entities: i64,
     pub total_relations: i64,
 }

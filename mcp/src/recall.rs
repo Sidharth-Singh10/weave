@@ -1,5 +1,7 @@
 //! Hybrid retrieval (GraphRAG): vector + full-text + graph expansion, merged
-//! with reciprocal rank fusion into a compact context block.
+//! with reciprocal rank fusion into a compact context block. Candidate
+//! entities come from the shared [`crate::retrieval`] engine; matching claims
+//! surface alongside notes and entities when embeddings are available.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,7 +12,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::embed::Embedder;
-use crate::models::{Entity, Note, RelationView};
+use crate::models::{ClaimView, Entity, Note, RelationView};
 use crate::store;
 
 const RRF_K: f64 = 60.0;
@@ -30,6 +32,8 @@ pub struct RecallResult {
     pub notes: Vec<RecallNote>,
     pub entities: Vec<Entity>,
     pub relations: Vec<RelationView>,
+    /// Matching evidence-backed claims (only when the embedder is semantic).
+    pub claims: Vec<ClaimView>,
     /// Compact, ready-to-use context block (summaries + subgraph).
     pub context: String,
 }
@@ -59,7 +63,7 @@ impl RrfKey for Note {
     }
 }
 
-/// Hybrid retrieval over notes, entities, and the graph neighborhood.
+/// Hybrid retrieval over notes, entities, claims, and the graph neighborhood.
 pub async fn recall_memory(
     pool: &PgPool,
     embedder: &Arc<dyn Embedder>,
@@ -67,18 +71,32 @@ pub async fn recall_memory(
     top_k: usize,
 ) -> anyhow::Result<RecallResult> {
     let top_k = top_k.clamp(1, 20);
-    let query_vec = embedder.embed(query)?;
+    let semantic = embedder.is_semantic();
+    let query_vec = if semantic { Some(embedder.embed(query)?) } else { None };
 
-    // Semantic + keyword candidate lists.
-    let vec_notes = store::vector_search_notes(pool, &query_vec, (top_k * 2) as i64).await?;
-    let vec_entities = store::vector_search_entities(pool, &query_vec, (top_k * 2) as i64).await?;
+    // Semantic + keyword candidate lists. Semantic lists are skipped for stub
+    // embedders (their vectors are noise).
+    let vec_notes = match &query_vec {
+        Some(v) => store::vector_search_notes(pool, v, (top_k * 2) as i64).await?,
+        None => vec![],
+    };
     let fts_notes = store::search_notes(pool, query, (top_k * 2) as i64).await?;
 
-    // Graph: expand the top semantic entities one hop and collect the notes
-    // that reference them.
+    // Entities + graph expansion via the shared retrieval engine.
+    let candidates = crate::retrieval::retrieve_entities(pool, embedder, query, top_k * 2).await?;
+    let entities: Vec<Entity> = candidates.iter().map(|c| c.entity.clone()).collect();
+
+    // Claims: semantically similar evidence-backed statements (active only).
+    let claims = match &query_vec {
+        Some(v) => store::vector_search_claims(pool, v, (top_k * 2) as i64).await?,
+        None => vec![],
+    };
+
+    // Graph: expand the top entities one hop and collect notes referencing
+    // them (unchanged from prior behavior).
     let mut graph_notes: Vec<Note> = Vec::new();
     let mut graph_relations: Vec<RelationView> = Vec::new();
-    for entity in vec_entities.iter().take(5) {
+    for entity in entities.iter().take(5) {
         for relation in store::relations_for_entity(pool, entity.id).await? {
             if !graph_relations
                 .iter()
@@ -126,21 +144,28 @@ pub async fn recall_memory(
         })
         .collect();
 
-    let entities = vec_entities.into_iter().take(top_k).collect::<Vec<_>>();
+    let entities = entities.into_iter().take(top_k).collect::<Vec<_>>();
+    let claims = claims.into_iter().take(top_k).collect::<Vec<_>>();
 
-    let context = build_context(&notes, &entities, &graph_relations);
+    let context = build_context(&notes, &entities, &graph_relations, &claims);
 
     Ok(RecallResult {
         notes,
         entities,
         relations: graph_relations,
+        claims,
         context,
     })
 }
 
-/// Compact context block: note summaries + subgraph, token-efficient for
-/// dropping straight into an agent's context.
-fn build_context(notes: &[RecallNote], entities: &[Entity], relations: &[RelationView]) -> String {
+/// Compact context block: note summaries + subgraph + claims, token-efficient
+/// for dropping straight into an agent's context.
+fn build_context(
+    notes: &[RecallNote],
+    entities: &[Entity],
+    relations: &[RelationView],
+    claims: &[ClaimView],
+) -> String {
     let mut out = String::from("## Relevant memories\n");
     if notes.is_empty() {
         out.push_str("(none)\n");
@@ -167,6 +192,16 @@ fn build_context(notes: &[RecallNote], entities: &[Entity], relations: &[Relatio
             out.push_str(&format!(
                 "- {} -[{}]-> {}\n",
                 r.source_label, r.relation, r.target_label
+            ));
+        }
+    }
+
+    if !claims.is_empty() {
+        out.push_str("## Claims\n");
+        for c in claims.iter().take(10) {
+            out.push_str(&format!(
+                "- {} -[{}]-> {} ({}, conf {:.2})\n",
+                c.subject_label, c.predicate, c.object_label, c.modality, c.confidence
             ));
         }
     }
@@ -199,7 +234,7 @@ mod tests {
 
     #[test]
     fn context_has_sections() {
-        let context = build_context(&[], &[], &[]);
+        let context = build_context(&[], &[], &[], &[]);
         assert!(context.contains("Relevant memories"));
     }
 

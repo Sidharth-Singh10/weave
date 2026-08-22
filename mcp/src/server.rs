@@ -141,6 +141,12 @@ pub struct ListClaimsArgs {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReindexArgs {
+    #[schemars(description = "Max rows to re-embed per type (1-500)")]
+    pub limit: Option<i64>,
+}
+
 fn parse_id(raw: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(raw.trim())
         .map_err(|_| McpError::invalid_params("invalid note id (expected UUID)", None))
@@ -471,5 +477,22 @@ impl MemoryServer {
         .await
         .map_err(|e| self.err(&e.to_string()))?;
         Ok(self.result_json(&claims))
+    }
+
+    /// Re-embed rows whose embedding model does not match the current one
+    /// (stub/no vectors or a stale model). Safe on-demand reindexing.
+    #[tool(description = "Re-embed notes, entities, and claims that lack vectors from the current model")]
+    async fn reindex_embeddings(
+        &self,
+        Parameters(args): Parameters<ReindexArgs>,
+    ) -> Result<String, McpError> {
+        let result = crate::retrieval::reindex_embeddings(
+            &self.pool,
+            &self.embedder,
+            args.limit.unwrap_or(200),
+        )
+        .await
+        .map_err(|e| self.err(&e.to_string()))?;
+        Ok(self.result_json(&result))
     }
 }

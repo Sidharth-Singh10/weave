@@ -9,9 +9,27 @@ use std::sync::Arc;
 
 pub const EMBEDDING_DIMS: usize = 384;
 
+/// Identifier of the deterministic stub embedder (recorded as the
+/// `embedding_model` of any vectors it produced).
+pub const STUB_MODEL_ID: &str = "stub";
+
+/// Identifier of the production local embedding model.
+pub const BGE_SMALL_EN_V15: &str = "BAAI/bge-small-en-v1.5";
+
 /// Text → embedding vector.
 pub trait Embedder: Send + Sync {
     fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>>;
+
+    /// Whether this embedder produces semantically meaningful vectors.
+    ///
+    /// The stub embedder's vectors are deterministic noise; retrieval must
+    /// skip the semantic layer entirely when this returns false, or it would
+    /// anchor entity selection on random vectors.
+    fn is_semantic(&self) -> bool;
+
+    /// Model identifier stamped on every vector this embedder produces, so
+    /// stale vectors can be detected and reindexed safely.
+    fn model_id(&self) -> &'static str;
 }
 
 /// Deterministic, dependency-free embedder. Not semantically meaningful — it
@@ -36,6 +54,14 @@ impl Embedder for StubEmbedder {
             *v /= norm;
         }
         Ok(vector)
+    }
+
+    fn is_semantic(&self) -> bool {
+        false
+    }
+
+    fn model_id(&self) -> &'static str {
+        STUB_MODEL_ID
     }
 }
 
@@ -69,6 +95,14 @@ impl Embedder for FastembedEmbedder {
             .next()
             .ok_or_else(|| anyhow::anyhow!("embedding produced no vectors"))
     }
+
+    fn is_semantic(&self) -> bool {
+        true
+    }
+
+    fn model_id(&self) -> &'static str {
+        BGE_SMALL_EN_V15
+    }
 }
 
 /// Build the embedder for the running binary: fastembed when the feature is
@@ -77,11 +111,10 @@ impl Embedder for FastembedEmbedder {
 pub fn build_embedder() -> Arc<dyn Embedder> {
     #[cfg(feature = "embedding")]
     {
-        let model = std::env::var("WEAVE_MCP_EMBEDDING_MODEL")
-            .unwrap_or_else(|_| "BAAI/bge-small-en-v1.5".to_string());
+        let model = std::env::var("WEAVE_MCP_EMBEDDING_MODEL").unwrap_or_else(|_| BGE_SMALL_EN_V15.to_string());
         match FastembedEmbedder::new(&model) {
             Ok(embedder) => {
-                tracing::info!(model = %model, "local embedding model loaded");
+                tracing::info!(model = %model, semantic = true, "local embedding model loaded");
                 return Arc::new(embedder);
             }
             Err(e) => {

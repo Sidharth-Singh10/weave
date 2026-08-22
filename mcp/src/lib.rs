@@ -14,6 +14,7 @@ pub mod graph;
 pub mod ingest;
 pub mod models;
 pub mod recall;
+pub mod retrieval;
 pub mod server;
 pub mod store;
 pub mod summary;

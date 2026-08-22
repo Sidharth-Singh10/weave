@@ -20,6 +20,10 @@ name: weave
 x-weave-mcp-env: &weave-mcp-env
   WEAVE_MCP_TRANSPORT: http
   WEAVE_MCP_DATA_DIR: /data
+  # Local ONNX embedding model (fastembed). Downloaded once into /data/hf on
+  # first start; falls back to the stub embedder if unavailable.
+  WEAVE_MCP_EMBEDDING_MODEL: ${WEAVE_MCP_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+  HF_HOME: /data/hf
   OPENCODE_BASE_URL: ${OPENCODE_BASE_URL:-https://opencode.ai/zen/go/v1}
   OPENCODE_MODEL: ${OPENCODE_MODEL:-deepseek-v4-flash}
   OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}

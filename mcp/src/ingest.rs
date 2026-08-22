@@ -21,8 +21,9 @@ use weave_core::models::{GraphNode, IngestRequest};
 use crate::claims;
 use crate::embed::Embedder;
 use crate::models::{Entity, IngestResult};
+use crate::retrieval::RetrievalCandidate;
 use crate::store;
-use crate::{entity, validate};
+use crate::{entity, retrieval, validate};
 
 /// Ingest a note: summarize, persist the note, extract + validate claims,
 /// resolve entities, project relations, record provenance, and embed the note
@@ -59,12 +60,15 @@ pub async fn ingest_note(
         None => content.to_string(),
     };
     if let Ok(embedding) = embedder.embed(&embed_text) {
-        let _ = store::set_note_embedding(pool, note.id, &embedding).await;
+        let _ = store::set_note_embedding(pool, note.id, &embedding, embedder.model_id()).await;
     }
 
-    // Existing entities the note mentions — passed to the LLM as context so it
+    // Candidate anchors: hybrid lexical + semantic retrieval (the semantic
+    // layer is skipped for stub embedders). Passed to the LLM as context so it
     // reuses existing labels.
-    let existing = store::find_entities_in_text(pool, content).await?;
+    let retrieval: Vec<RetrievalCandidate> =
+        retrieval::retrieve_entities(pool, embedder, content, 50).await?;
+    let existing: Vec<Entity> = retrieval.iter().map(|c| c.entity.clone()).collect();
     let existing_nodes: Vec<GraphNode> = existing
         .iter()
         .map(|e| GraphNode {
@@ -129,7 +133,9 @@ pub async fn ingest_note(
         if r.created {
             entities_added.push(node.label.clone());
             if let Ok(embedding) = embedder.embed(&node.label) {
-                let _ = store::set_entity_embedding(pool, r.entity.id, &embedding).await;
+                let _ =
+                    store::set_entity_embedding(pool, r.entity.id, &embedding, embedder.model_id())
+                        .await;
             }
         }
         if !entities_used.iter().any(|e| e.id == r.entity.id) {
@@ -225,6 +231,16 @@ pub async fn ingest_note(
             claims_added += 1;
         }
 
+        // Embed the claim (subject predicate object) so recall can surface it.
+        if let Ok(embedding) = embedder.embed(&retrieval::claim_embedding_text(
+            &candidate.subject_label,
+            &candidate.predicate,
+            &candidate.object_label,
+        )) {
+            let _ =
+                store::set_claim_embedding(pool, claim.id, &embedding, embedder.model_id()).await;
+        }
+
         // Project to the graph relation (canonical unique source/target/rel).
         let relation = match store::insert_relation(pool, subject.id, object.id, &candidate.predicate)
             .await?
@@ -286,6 +302,7 @@ pub async fn ingest_note(
         claims_quarantined,
         claims_rejected,
         contradictions_detected,
+        retrieval,
         total_entities,
         total_relations,
     })

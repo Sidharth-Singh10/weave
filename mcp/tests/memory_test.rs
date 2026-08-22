@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use weave_core::llm::OpenCodeClient;
-use weave_mcp::{claims, db, embed, ingest, store};
+use weave_mcp::{claims, db, embed, ingest, retrieval, store};
 
 /// Serializes DB-backed integration tests so they cannot corrupt each other's
 /// fixtures (they share the `weave_mcp` database).
@@ -446,5 +446,84 @@ async fn claims_evidence_contradiction_and_alias() {
     assert!(alias_note.total_entities >= 1);
 
     // Cleanup notes (claims cascade with them).
+    store::delete_note(&pool, note.note_id).await.unwrap();
+}
+
+/// V3: hybrid retrieval with a stub embedder skips the semantic layer,
+/// anchors are lexical + 1-hop graph expansion with explainable reasons, and
+/// reindex stamps the embedding model.
+#[tokio::test]
+async fn retrieval_reasons_and_reindex_v3() {
+    let _guard = DB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: no reachable database");
+        return;
+    };
+    let llm = Arc::new(OpenCodeClient::mock());
+    let embedder = stub_embedder();
+
+    let note = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "Hogwarts has a secret chamber.",
+        "note",
+        &[],
+        "user",
+        None,
+    )
+    .await
+    .expect("ingest");
+    assert!(!note.retrieval.is_empty(), "ingest returns candidate anchors");
+    assert!(
+        note.retrieval.iter().all(|c| c.reasons.iter().all(|r| r != "semantic")),
+        "stub embedder must not use the semantic layer"
+    );
+
+    // Stub embedder: the semantic layer is skipped entirely.
+    let candidates = retrieval::retrieve_entities(
+        &pool,
+        &embedder,
+        "Hogwarts has a secret chamber.",
+        10,
+    )
+    .await
+    .unwrap();
+    assert!(!candidates.is_empty());
+    assert!(
+        candidates.iter().all(|c| c.reasons.iter().all(|r| r != "semantic")),
+        "no semantic reasons with stub embedder"
+    );
+
+    // Graph expansion: querying the leaf "secret chamber" surfaces the
+    // 1-hop neighbor "Hogwarts".
+    let expanded = retrieval::retrieve_entities(&pool, &embedder, "secret chamber secrets", 10)
+        .await
+        .unwrap();
+    let hogwarts = expanded.iter().find(|c| c.entity.label == "Hogwarts");
+    assert!(
+        hogwarts.is_some(),
+        "1-hop neighbor Hogwarts must be retrievable: {expanded:?}"
+    );
+    assert!(
+        hogwarts.unwrap().reasons.iter().any(|r| r.starts_with("1-hop of")),
+        "reason must explain the graph expansion"
+    );
+
+    // Note embedding is stamped with the current model id.
+    let model: Option<String> = sqlx::query_scalar(
+        "SELECT embedding_model FROM notes WHERE id = $1",
+    )
+    .bind(note.note_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(model.as_deref(), Some(embed::STUB_MODEL_ID));
+
+    // Reindex is a no-op for rows already stamped with the current model.
+    let result = retrieval::reindex_embeddings(&pool, &embedder, 200).await.unwrap();
+    assert_eq!(result.model, embed::STUB_MODEL_ID);
+    assert!(!result.semantic);
+
     store::delete_note(&pool, note.note_id).await.unwrap();
 }

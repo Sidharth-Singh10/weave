@@ -1,9 +1,9 @@
 //! SQL queries for the knowledge/memory store.
 
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::models::{Document, Entity, Note, Relation, RelationView};
+use crate::models::{Claim, Document, Entity, Note, Relation, RelationView};
 
 // ---------------------------------------------------------------------------
 // Notes
@@ -457,9 +457,11 @@ pub async fn set_note_embedding(
     pool: &PgPool,
     id: Uuid,
     embedding: &[f32],
+    model: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE notes SET embedding = $1 WHERE id = $2")
+    sqlx::query("UPDATE notes SET embedding = $1, embedding_model = $2 WHERE id = $3")
         .bind(pgvector::Vector::from(embedding.to_vec()))
+        .bind(model)
         .bind(id)
         .execute(pool)
         .await?;
@@ -470,9 +472,26 @@ pub async fn set_entity_embedding(
     pool: &PgPool,
     id: Uuid,
     embedding: &[f32],
+    model: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE entities SET embedding = $1 WHERE id = $2")
+    sqlx::query("UPDATE entities SET embedding = $1, embedding_model = $2 WHERE id = $3")
         .bind(pgvector::Vector::from(embedding.to_vec()))
+        .bind(model)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_claim_embedding(
+    pool: &PgPool,
+    id: Uuid,
+    embedding: &[f32],
+    model: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE claims SET embedding = $1, embedding_model = $2 WHERE id = $3")
+        .bind(pgvector::Vector::from(embedding.to_vec()))
+        .bind(model)
         .bind(id)
         .execute(pool)
         .await?;
@@ -518,6 +537,147 @@ pub async fn vector_search_entities(
         "#,
     )
     .bind(pgvector::Vector::from(embedding.to_vec()))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Entities nearest to `embedding` with their cosine similarity (0..1).
+pub async fn vector_search_entities_scored(
+    pool: &PgPool,
+    embedding: &[f32],
+    limit: i64,
+) -> Result<Vec<(Entity, f32)>, sqlx::Error> {
+    let limit = limit.clamp(1, 100);
+    let rows = sqlx::query(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at,
+               1 - (embedding <=> $1::vector) AS similarity
+        FROM entities
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <=> $1::vector
+        LIMIT $2
+        "#,
+    )
+    .bind(pgvector::Vector::from(embedding.to_vec()))
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let entity = Entity {
+            id: row.get("id"),
+            label: row.get("label"),
+            normalized_label: row.get("normalized_label"),
+            kind: row.get("kind"),
+            aliases: row.get("aliases"),
+            description: row.get("description"),
+            created_at: row.get("created_at"),
+        };
+        let similarity: f64 = row.get("similarity");
+        out.push((entity, similarity.clamp(0.0, 1.0) as f32));
+    }
+    Ok(out)
+}
+
+/// Claims nearest to `embedding` by cosine distance, with endpoint labels.
+/// Recall-oriented: only `active` claims are surfaceable.
+pub async fn vector_search_claims(
+    pool: &PgPool,
+    embedding: &[f32],
+    limit: i64,
+) -> Result<Vec<crate::models::ClaimView>, sqlx::Error> {
+    let limit = limit.clamp(1, 100);
+    sqlx::query_as::<_, crate::models::ClaimView>(
+        r#"
+        SELECT c.id,
+               e1.label AS subject_label,
+               c.predicate,
+               e2.label AS object_label,
+               c.modality, c.confidence, c.status,
+               c.evidence_span, c.evidence_offset, c.extraction_version,
+               n.content AS note_content,
+               c.created_at
+        FROM claims c
+        JOIN entities e1 ON e1.id = c.subject_id
+        JOIN entities e2 ON e2.id = c.object_id
+        JOIN notes n ON n.id = c.note_id
+        WHERE c.embedding IS NOT NULL AND c.status = 'active'
+        ORDER BY c.embedding <=> $1::vector
+        LIMIT $2
+        "#,
+    )
+    .bind(pgvector::Vector::from(embedding.to_vec()))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Embedding reindex targets (V3)
+// ---------------------------------------------------------------------------
+
+/// Notes whose vectors are missing or were produced by another model.
+pub async fn notes_needing_reindex(
+    pool: &PgPool,
+    current_model: &str,
+    limit: i64,
+) -> Result<Vec<Note>, sqlx::Error> {
+    let limit = limit.clamp(1, 500);
+    sqlx::query_as::<_, Note>(
+        r#"
+        SELECT id, content, summary, kind, tags, importance, source, metadata, created_at, updated_at
+        FROM notes
+        WHERE COALESCE(embedding_model, '') <> $1
+        ORDER BY created_at
+        LIMIT $2
+        "#,
+    )
+    .bind(current_model)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Entities whose vectors are missing or were produced by another model.
+pub async fn entities_needing_reindex(
+    pool: &PgPool,
+    current_model: &str,
+    limit: i64,
+) -> Result<Vec<Entity>, sqlx::Error> {
+    let limit = limit.clamp(1, 500);
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities
+        WHERE COALESCE(embedding_model, '') <> $1
+        ORDER BY created_at
+        LIMIT $2
+        "#,
+    )
+    .bind(current_model)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Claims whose vectors are missing or were produced by another model.
+pub async fn claims_needing_reindex(
+    pool: &PgPool,
+    current_model: &str,
+    limit: i64,
+) -> Result<Vec<Claim>, sqlx::Error> {
+    let limit = limit.clamp(1, 500);
+    sqlx::query_as::<_, Claim>(
+        r#"
+        SELECT * FROM claims
+        WHERE COALESCE(embedding_model, '') <> $1
+        ORDER BY created_at
+        LIMIT $2
+        "#,
+    )
+    .bind(current_model)
     .bind(limit)
     .fetch_all(pool)
     .await
