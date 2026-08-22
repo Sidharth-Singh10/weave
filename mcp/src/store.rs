@@ -20,8 +20,8 @@ pub async fn insert_note(
 ) -> Result<Note, sqlx::Error> {
     sqlx::query_as::<_, Note>(
         r#"
-        INSERT INTO notes (content, summary, kind, tags, source, source_document_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO notes (content, summary, kind, tags, source, source_document_id, content_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id, content, summary, kind, tags, importance, source, metadata, created_at, updated_at
         "#,
     )
@@ -31,8 +31,47 @@ pub async fn insert_note(
     .bind(tags)
     .bind(source)
     .bind(source_document_id)
+    .bind(content_hash(content))
     .fetch_one(pool)
     .await
+}
+
+/// SHA-256 hex of the trimmed note text — the idempotency key.
+pub fn content_hash(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(content.trim().as_bytes()))
+}
+
+/// Find a note by its content hash (idempotent write dedup).
+pub async fn find_note_by_hash(
+    pool: &PgPool,
+    content: &str,
+) -> Result<Option<Note>, sqlx::Error> {
+    sqlx::query_as::<_, Note>(
+        r#"
+        SELECT id, content, summary, kind, tags, importance, source, metadata, created_at, updated_at
+        FROM notes WHERE content_hash = $1
+        LIMIT 1
+        "#,
+    )
+    .bind(content_hash(content))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Deep-merge a JSON object into a note's metadata (agent attribution, chunk
+/// info, …).
+pub async fn merge_note_metadata(
+    pool: &PgPool,
+    id: Uuid,
+    metadata: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE notes SET metadata = metadata || $1, updated_at = now() WHERE id = $2")
+        .bind(metadata)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn get_note(pool: &PgPool, id: Uuid) -> Result<Option<Note>, sqlx::Error> {
@@ -77,6 +116,97 @@ pub async fn delete_note(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
         .execute(pool)
         .await?;
     Ok(res.rows_affected() > 0)
+}
+
+/// Notes older than `days` days, newest first (for retention pruning).
+pub async fn notes_older_than(
+    pool: &PgPool,
+    days: i64,
+    limit: i64,
+) -> Result<Vec<Note>, sqlx::Error> {
+    let limit = limit.clamp(1, 1000);
+    sqlx::query_as::<_, Note>(
+        r#"
+        SELECT id, content, summary, kind, tags, importance, source, metadata, created_at, updated_at
+        FROM notes
+        WHERE created_at < now() - ($1::int || ' days')::interval
+        ORDER BY created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Hard-delete an entity (relations, claims, and provenance cascade).
+pub async fn delete_entity(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM entities WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// Count claims grouped by status.
+pub async fn count_claims_by_status(pool: &PgPool) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    sqlx::query_as("SELECT status, count(*)::bigint FROM claims GROUP BY status ORDER BY status")
+        .fetch_all(pool)
+        .await
+}
+
+/// Count claims reviewed by the V4 verifier.
+pub async fn count_claims_verified(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM claims WHERE metadata ? 'verifier'")
+            .fetch_one(pool)
+            .await?;
+    Ok(count)
+}
+
+/// Rows whose embeddings are missing or produced by another model, per type.
+pub async fn embeddings_coverage(
+    pool: &PgPool,
+    current_model: &str,
+) -> Result<(i64, i64, i64), sqlx::Error> {
+    let notes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notes WHERE COALESCE(embedding_model, '') <> $1",
+    )
+    .bind(current_model)
+    .fetch_one(pool)
+    .await?;
+    let entities: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM entities WHERE COALESCE(embedding_model, '') <> $1",
+    )
+    .bind(current_model)
+    .fetch_one(pool)
+    .await?;
+    let claims: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM claims WHERE COALESCE(embedding_model, '') <> $1",
+    )
+    .bind(current_model)
+    .fetch_one(pool)
+    .await?;
+    Ok((notes, entities, claims))
+}
+
+/// Count contradictions (pairs).
+pub async fn count_contradictions(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM claim_contradictions")
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
+}
+
+/// Count notes in a chunk (long-document) sequence for a document.
+pub async fn count_chunks_for_document(pool: &PgPool, document_id: Uuid) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM notes WHERE source_document_id = $1")
+            .bind(document_id)
+            .fetch_one(pool)
+            .await?;
+    Ok(count)
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +320,13 @@ pub async fn get_or_create_entity(
 
 pub async fn count_entities(pool: &PgPool) -> Result<i64, sqlx::Error> {
     let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM entities")
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
+}
+
+pub async fn count_notes(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM notes")
         .fetch_one(pool)
         .await?;
     Ok(count)
@@ -604,14 +741,20 @@ pub async fn vector_search_entities_scored(
 }
 
 /// Claims nearest to `embedding` by cosine distance, with endpoint labels.
-/// Recall-oriented: only `active` claims are surfaceable.
+/// `include_contradicted` widens the recall set to contradicted pairs.
 pub async fn vector_search_claims(
     pool: &PgPool,
     embedding: &[f32],
     limit: i64,
+    include_contradicted: bool,
 ) -> Result<Vec<crate::models::ClaimView>, sqlx::Error> {
     let limit = limit.clamp(1, 100);
-    sqlx::query_as::<_, crate::models::ClaimView>(
+    let status_filter = if include_contradicted {
+        "AND c.status IN ('active', 'contradicted')"
+    } else {
+        "AND c.status = 'active'"
+    };
+    let sql = format!(
         r#"
         SELECT c.id,
                e1.label AS subject_label,
@@ -625,15 +768,16 @@ pub async fn vector_search_claims(
         JOIN entities e1 ON e1.id = c.subject_id
         JOIN entities e2 ON e2.id = c.object_id
         JOIN notes n ON n.id = c.note_id
-        WHERE c.embedding IS NOT NULL AND c.status = 'active'
+        WHERE c.embedding IS NOT NULL {status_filter}
         ORDER BY c.embedding <=> $1::vector
         LIMIT $2
         "#,
-    )
-    .bind(pgvector::Vector::from(embedding.to_vec()))
-    .bind(limit)
-    .fetch_all(pool)
-    .await
+    );
+    sqlx::query_as::<_, crate::models::ClaimView>(&sql)
+        .bind(pgvector::Vector::from(embedding.to_vec()))
+        .bind(limit)
+        .fetch_all(pool)
+        .await
 }
 
 // ---------------------------------------------------------------------------

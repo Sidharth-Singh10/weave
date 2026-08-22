@@ -5,6 +5,7 @@
 //! transport.
 
 pub mod claims;
+pub mod audit;
 pub mod config;
 pub mod db;
 pub mod embed;

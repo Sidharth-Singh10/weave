@@ -64,11 +64,13 @@ impl RrfKey for Note {
 }
 
 /// Hybrid retrieval over notes, entities, claims, and the graph neighborhood.
+/// `include_contradicted` widens claim recall to contradicted pairs (flagged).
 pub async fn recall_memory(
     pool: &PgPool,
     embedder: &Arc<dyn Embedder>,
     query: &str,
     top_k: usize,
+    include_contradicted: bool,
 ) -> anyhow::Result<RecallResult> {
     let top_k = top_k.clamp(1, 20);
     let semantic = embedder.is_semantic();
@@ -86,9 +88,10 @@ pub async fn recall_memory(
     let candidates = crate::retrieval::retrieve_entities(pool, embedder, query, top_k * 2).await?;
     let entities: Vec<Entity> = candidates.iter().map(|c| c.entity.clone()).collect();
 
-    // Claims: semantically similar evidence-backed statements (active only).
+    // Claims: semantically similar evidence-backed statements.
     let claims = match &query_vec {
-        Some(v) => store::vector_search_claims(pool, v, (top_k * 2) as i64).await?,
+        Some(v) => store::vector_search_claims(pool, v, (top_k * 2) as i64, include_contradicted)
+            .await?,
         None => vec![],
     };
 
@@ -199,8 +202,14 @@ fn build_context(
     if !claims.is_empty() {
         out.push_str("## Claims\n");
         for c in claims.iter().take(10) {
+            let status = if c.status == "contradicted" { " [CONTRADICTED]" } else { "" };
+            let evidence = c
+                .evidence_span
+                .as_deref()
+                .map(|s| format!(" — {:.80}", s))
+                .unwrap_or_default();
             out.push_str(&format!(
-                "- {} -[{}]-> {} ({}, conf {:.2})\n",
+                "- {} -[{}]-> {} ({}, conf {:.2}){status}{evidence}\n",
                 c.subject_label, c.predicate, c.object_label, c.modality, c.confidence
             ));
         }

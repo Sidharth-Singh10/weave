@@ -63,6 +63,8 @@ pub struct RememberArgs {
     pub kind: Option<String>,
     #[schemars(description = "Optional tags")]
     pub tags: Option<Vec<String>>,
+    #[schemars(description = "Optional agent identity attributed to this write")]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -71,6 +73,8 @@ pub struct AddFileArgs {
     pub path: String,
     #[schemars(description = "Optional description or context for the file")]
     pub description: Option<String>,
+    #[schemars(description = "Optional agent identity attributed to this write")]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -123,6 +127,8 @@ pub struct RecallArgs {
     pub query: String,
     #[schemars(description = "Max memories to return (1-20)")]
     pub top_k: Option<usize>,
+    #[schemars(description = "Include contradicted claim pairs (flagged)")]
+    pub include_contradicted: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -146,6 +152,33 @@ pub struct ReindexArgs {
     #[schemars(description = "Max rows to re-embed per type (1-500)")]
     pub limit: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ForgetEntityArgs {
+    #[schemars(description = "Entity label (or alias) to delete")]
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PruneNotesArgs {
+    #[schemars(description = "Delete notes older than this many days")]
+    pub days: i64,
+    #[schemars(description = "Max notes to delete (1-1000)")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CorrectClaimArgs {
+    #[schemars(description = "Claim id (UUID) to correct")]
+    pub id: String,
+    #[schemars(description = "Corrected predicate (optional)")]
+    pub predicate: Option<String>,
+    #[schemars(description = "Corrected object label (optional)")]
+    pub object_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MemoryStatsArgs {}
 
 fn parse_id(raw: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(raw.trim())
@@ -185,6 +218,8 @@ impl MemoryServer {
             "user",
             None,
             self.config.verifier_enabled,
+            args.agent_id.as_deref(),
+            None,
         )
         .await
         .map_err(|e| self.err(&e.to_string()))?;
@@ -234,13 +269,14 @@ impl MemoryServer {
 
         if let Some(text) = text {
             if !text.trim().is_empty() {
-                let ingested: IngestResult = ingest::ingest_document_text(
+                let ingested: IngestResult = ingest::ingest_document_chunks(
                     &self.pool,
                     &self.llm,
                     &self.embedder,
                     document.id,
                     &text,
                     self.config.verifier_enabled,
+                    args.agent_id.as_deref(),
                 )
                 .await
                 .map_err(|e| self.err(&e.to_string()))?;
@@ -422,6 +458,7 @@ impl MemoryServer {
             &self.embedder,
             query,
             args.top_k.unwrap_or(5),
+            args.include_contradicted.unwrap_or(false),
         )
         .await
         .map_err(|e| self.err(&e.to_string()))?;
@@ -496,5 +533,197 @@ impl MemoryServer {
         .await
         .map_err(|e| self.err(&e.to_string()))?;
         Ok(self.result_json(&result))
+    }
+
+    /// Permanently delete an entity and the memory derived from it
+    /// (relations, claims, provenance). Audited.
+    #[tool(description = "Forget an entity and everything derived from it (audited, hard delete)")]
+    async fn forget_entity(
+        &self,
+        Parameters(args): Parameters<ForgetEntityArgs>,
+    ) -> Result<String, McpError> {
+        let label = args.label.trim();
+        if label.is_empty() {
+            return Err(McpError::invalid_params("label must not be empty", None));
+        }
+        let entity = store::find_entity_by_normalized(&self.pool, &store::normalize_label(label))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        let entity = match entity {
+            Some(e) => e,
+            None => {
+                let alias = store::find_entities_by_alias(&self.pool, &store::normalize_label(label))
+                    .await
+                    .map_err(|e| self.err(&e.to_string()))?;
+                match alias.first() {
+                    Some(e) => e.clone(),
+                    None => return Ok(format!("Entity \"{label}\" not found.")),
+                }
+            }
+        };
+
+        let claims = crate::claims::claims_for_entity(&self.pool, entity.id, None, 1000)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        let deleted = store::delete_entity(&self.pool, entity.id)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        crate::audit::record_new(
+            &self.pool,
+            "tool:forget_entity",
+            crate::audit::action::ENTITY_DELETED,
+            Some("entity"),
+            Some(&entity.id.to_string()),
+            serde_json::json!({ "label": entity.label, "claims_removed": claims.len() }),
+        )
+        .await;
+        Ok(self.result_json(&json!({
+            "deleted": deleted,
+            "entity": entity.label,
+            "claims_removed": claims.len(),
+        })))
+    }
+
+    /// Delete notes older than `days` days (audited retention cleanup).
+    #[tool(description = "Prune notes older than N days (audited retention cleanup)")]
+    async fn prune_notes(
+        &self,
+        Parameters(args): Parameters<PruneNotesArgs>,
+    ) -> Result<String, McpError> {
+        if args.days < 1 {
+            return Err(McpError::invalid_params("days must be >= 1", None));
+        }
+        let notes = store::notes_older_than(&self.pool, args.days, args.limit.unwrap_or(200))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        let mut deleted = 0i64;
+        for note in &notes {
+            let ok = store::delete_note(&self.pool, note.id)
+                .await
+                .map_err(|e| self.err(&e.to_string()))?;
+            if ok {
+                deleted += 1;
+                crate::audit::record_new(
+                    &self.pool,
+                    "tool:prune_notes",
+                    crate::audit::action::NOTE_DELETED,
+                    Some("note"),
+                    Some(&note.id.to_string()),
+                    serde_json::json!({ "age_days": args.days }),
+                )
+                .await;
+            }
+        }
+        Ok(self.result_json(&json!({ "deleted_notes": deleted })))
+    }
+
+    /// Correct a memory: the old claim is marked `superseded` and a new
+    /// corrected claim is committed. Audited.
+    #[tool(description = "Correct a claim: supersede it and record the corrected version")]
+    async fn correct_claim(
+        &self,
+        Parameters(args): Parameters<CorrectClaimArgs>,
+    ) -> Result<String, McpError> {
+        let id = parse_id(&args.id)?;
+        let old = crate::claims::get_claim_row(&self.pool, id)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?
+            .ok_or_else(|| McpError::invalid_params("claim not found", None))?;
+        if old.status == "superseded" {
+            return Err(McpError::invalid_params("claim is already superseded", None));
+        }
+
+        let predicate = args
+            .predicate
+            .unwrap_or_else(|| old.predicate.clone());
+        let (object_id, object_label) = match args.object_label {
+            Some(label) if !label.trim().is_empty() => {
+                let resolved = crate::entity::resolve(&self.pool, &label, "concept")
+                    .await
+                    .map_err(|e| self.err(&e.to_string()))?;
+                (resolved.entity.id, resolved.entity.label.clone())
+            }
+            _ => (old.object_id, old.proposed_object_label.clone()),
+        };
+
+        let corrected = crate::claims::insert_claim(
+            &self.pool,
+            &crate::claims::NewClaim {
+                note_id: old.note_id,
+                subject_id: old.subject_id,
+                proposed_subject_label: &old.proposed_subject_label,
+                predicate: &predicate,
+                object_id,
+                proposed_object_label: &object_label,
+                modality: &old.modality,
+                confidence: old.confidence,
+                status: "active",
+                evidence_span: old.evidence_span.clone(),
+                evidence_offset: old.evidence_offset,
+                extraction_version: &old.extraction_version,
+                source: &old.source,
+                source_document_id: old.source_document_id,
+                metadata: serde_json::json!({ "corrected": true, "supersedes": old.id }),
+            },
+        )
+        .await
+        .map_err(|e| self.err(&e.to_string()))?;
+
+        crate::claims::supersede_claim(&self.pool, old.id, corrected.id)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        crate::audit::record_new(
+            &self.pool,
+            "tool:correct_claim",
+            crate::audit::action::CLAIM_SUPERSEDED,
+            Some("claim"),
+            Some(&old.id.to_string()),
+            serde_json::json!({ "superseded_by": corrected.id, "predicate": predicate }),
+        )
+        .await;
+
+        Ok(self.result_json(&json!({
+            "superseded_claim_id": old.id,
+            "corrected_claim_id": corrected.id,
+        })))
+    }
+
+    /// Memory observability: counts, claim statuses, verifier stats, and
+    /// embedding-model coverage.
+    #[tool(description = "Memory service statistics (counts, statuses, verifier, embedding coverage)")]
+    async fn memory_stats(
+        &self,
+        Parameters(_args): Parameters<MemoryStatsArgs>,
+    ) -> Result<String, McpError> {
+        let notes = store::count_notes(&self.pool).await;
+        let notes = notes.unwrap_or(0);
+        let entities = store::count_entities(&self.pool).await.unwrap_or(0);
+        let relations = store::count_relations(&self.pool).await.unwrap_or(0);
+        let claims_by_status = store::count_claims_by_status(&self.pool)
+            .await
+            .unwrap_or_default();
+        let contradictions = store::count_contradictions(&self.pool).await.unwrap_or(0);
+        let verified = store::count_claims_verified(&self.pool).await.unwrap_or(0);
+        let model = self.embedder.model_id();
+        let (stale_notes, stale_entities, stale_claims) = store::embeddings_coverage(
+            &self.pool,
+            model,
+        )
+        .await
+        .unwrap_or((0, 0, 0));
+
+        Ok(self.result_json(&json!({
+            "counts": { "notes": notes, "entities": entities, "relations": relations },
+            "claims": {
+                "by_status": claims_by_status.into_iter().collect::<std::collections::HashMap<_,_>>(),
+                "contradictions": contradictions,
+                "verified": verified,
+            },
+            "embeddings": {
+                "model": model,
+                "semantic": self.embedder.is_semantic(),
+                "stale": { "notes": stale_notes, "entities": stale_entities, "claims": stale_claims },
+            },
+        })))
     }
 }

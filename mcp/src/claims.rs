@@ -181,6 +181,34 @@ pub async fn get_claim(pool: &PgPool, id: Uuid) -> Result<Option<ClaimView>, sql
         .await
 }
 
+/// Full claim row (endpoint ids + note ref) for corrections.
+pub async fn get_claim_row(pool: &PgPool, id: Uuid) -> Result<Option<Claim>, sqlx::Error> {
+    sqlx::query_as::<_, Claim>("SELECT * FROM claims WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Mark a claim superseded and record which claim replaced it.
+pub async fn supersede_claim(
+    pool: &PgPool,
+    claim_id: Uuid,
+    superseded_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE claims SET status = 'superseded', updated_at = now(),
+            metadata = jsonb_set(metadata, '{superseded_by}', to_jsonb($2::uuid))
+        WHERE id = $1
+        "#,
+    )
+    .bind(claim_id)
+    .bind(superseded_by)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn claims_for_note(pool: &PgPool, note_id: Uuid) -> Result<Vec<ClaimView>, sqlx::Error> {
     sqlx::query_as::<_, ClaimView>(&format!(
         "{CLAIM_VIEW_SQL} WHERE c.note_id = $1 ORDER BY c.created_at"

@@ -123,6 +123,10 @@ pub struct IngestResult {
     /// Candidate anchors selected by hybrid retrieval, with explainable
     /// scores/reasons (why each entity was offered to the extractor).
     pub retrieval: Vec<crate::retrieval::RetrievalCandidate>,
+    /// Write receipt: ids of the claims this write committed.
+    pub claim_ids: Vec<Uuid>,
+    /// True when the content already existed (idempotent write).
+    pub duplicate: bool,
     pub total_entities: i64,
     pub total_relations: i64,
 }

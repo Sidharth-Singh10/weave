@@ -40,9 +40,41 @@ pub async fn ingest_note(
     source: &str,
     source_document_id: Option<Uuid>,
     verifier_enabled: bool,
+    agent_id: Option<&str>,
+    note_metadata: Option<serde_json::Value>,
 ) -> Result<IngestResult, anyhow::Error> {
     if content.trim().is_empty() {
         anyhow::bail!("note content must not be empty");
+    }
+
+    let actor = agent_id.unwrap_or(source);
+
+    // Idempotent write: identical content already stored -> return the
+    // existing note receipt with its committed claim ids.
+    if let Some(existing) = store::find_note_by_hash(pool, content).await? {
+        let claim_ids = crate::claims::claims_for_note(pool, existing.id)
+            .await?
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        let total_entities = store::count_entities(pool).await?;
+        let total_relations = store::count_relations(pool).await?;
+        return Ok(IngestResult {
+            note_id: existing.id,
+            summary: existing.summary.clone(),
+            entities_added: vec![],
+            relations_added: vec![],
+            claims_added: 0,
+            claims_quarantined: 0,
+            claims_rejected: 0,
+            claims_verified: 0,
+            contradictions_detected: 0,
+            retrieval: vec![],
+            claim_ids,
+            duplicate: true,
+            total_entities,
+            total_relations,
+        });
     }
 
     let summary = crate::summary::summarize_arc(llm, content).await;
@@ -56,6 +88,25 @@ pub async fn ingest_note(
         source_document_id,
     )
     .await?;
+
+    // Merge caller metadata + agent attribution onto the note.
+    if note_metadata.is_some() || agent_id.is_some() {
+        let mut meta = note_metadata.unwrap_or_else(|| serde_json::json!({}));
+        if let Some(agent) = agent_id {
+            meta["agent"] = serde_json::Value::String(agent.to_string());
+        }
+        store::merge_note_metadata(pool, note.id, &meta).await?;
+    }
+
+    crate::audit::record_new(
+        pool,
+        actor,
+        crate::audit::action::NOTE_CREATED,
+        Some("note"),
+        Some(&note.id.to_string()),
+        serde_json::json!({ "kind": kind, "source": source }),
+    )
+    .await;
 
     // Embed the note (summary + content) best-effort.
     let embed_text = match &summary {
@@ -108,6 +159,7 @@ pub async fn ingest_note(
 
     let mut entities_added: Vec<String> = Vec::new();
     let mut relations_added: Vec<String> = Vec::new();
+    let mut claim_ids: Vec<Uuid> = Vec::new();
     let mut claims_added = 0i64;
     let mut claims_quarantined = 0i64;
     let mut claims_rejected = 0i64;
@@ -137,6 +189,15 @@ pub async fn ingest_note(
         let r = entity::resolve(pool, &node.label, &node.kind).await?;
         if r.created {
             entities_added.push(node.label.clone());
+            crate::audit::record_new(
+                pool,
+                actor,
+                crate::audit::action::ENTITY_CREATED,
+                Some("entity"),
+                Some(&r.entity.id.to_string()),
+                serde_json::json!({ "label": node.label, "kind": node.kind }),
+            )
+            .await;
             if let Ok(embedding) = embedder.embed(&node.label) {
                 let _ =
                     store::set_entity_embedding(pool, r.entity.id, &embedding, embedder.model_id())
@@ -281,6 +342,7 @@ pub async fn ingest_note(
                     if status == "active" {
                         apply_canonical_alias(
                             pool,
+                            actor,
                             verdict.canonical_subject_id.as_deref(),
                             &subject_r.ambiguous_candidates,
                             &candidate.subject_label,
@@ -288,6 +350,7 @@ pub async fn ingest_note(
                         .await?;
                         apply_canonical_alias(
                             pool,
+                            actor,
                             verdict.canonical_object_id.as_deref(),
                             &object_r.ambiguous_candidates,
                             &candidate.object_label,
@@ -310,6 +373,7 @@ pub async fn ingest_note(
             }
         }
 
+        let verifier_audit = metadata.get("verifier").cloned();
         let claim = claims::insert_claim(
             pool,
             &claims::NewClaim {
@@ -333,10 +397,49 @@ pub async fn ingest_note(
         .await?;
         if status == "quarantined" {
             claims_quarantined += 1;
+            crate::audit::record_new(
+                pool,
+                actor,
+                crate::audit::action::CLAIM_QUARANTINED,
+                Some("claim"),
+                Some(&claim.id.to_string()),
+                serde_json::json!({ "subject": candidate.subject_label, "predicate": candidate.predicate, "object": candidate.object_label }),
+            )
+            .await;
         } else if status == "rejected" {
             claims_rejected += 1;
+            crate::audit::record_new(
+                pool,
+                actor,
+                crate::audit::action::CLAIM_REJECTED,
+                Some("claim"),
+                Some(&claim.id.to_string()),
+                serde_json::json!({ "subject": candidate.subject_label, "predicate": candidate.predicate, "object": candidate.object_label }),
+            )
+            .await;
         } else {
             claims_added += 1;
+            claim_ids.push(claim.id);
+            crate::audit::record_new(
+                pool,
+                actor,
+                crate::audit::action::CLAIM_CREATED,
+                Some("claim"),
+                Some(&claim.id.to_string()),
+                serde_json::json!({ "subject": candidate.subject_label, "predicate": candidate.predicate, "object": candidate.object_label, "modality": modality, "status": status }),
+            )
+            .await;
+        }
+        if let Some(v) = verifier_audit {
+            crate::audit::record_new(
+                pool,
+                actor,
+                crate::audit::action::CLAIM_VERIFIED,
+                Some("claim"),
+                Some(&claim.id.to_string()),
+                v,
+            )
+            .await;
         }
 
         // Embed the claim (subject predicate object) so recall can surface it.
@@ -379,6 +482,15 @@ pub async fn ingest_note(
             claims::set_claim_status(pool, opp.id, "contradicted").await?;
             claims::link_contradiction(pool, claim.id, opp.id).await?;
             contradictions_detected += 1;
+            crate::audit::record_new(
+                pool,
+                actor,
+                crate::audit::action::CONTRADICTION_LINKED,
+                Some("claim"),
+                Some(&claim.id.to_string()),
+                serde_json::json!({ "opposes": opp.id, "subject": candidate.subject_label, "predicate": candidate.predicate, "object": candidate.object_label }),
+            )
+            .await;
         }
 
         for endpoint in [subject, object] {
@@ -407,6 +519,8 @@ pub async fn ingest_note(
         claims_verified,
         contradictions_detected,
         retrieval,
+        claim_ids,
+        duplicate: false,
         total_entities,
         total_relations,
     })
@@ -469,6 +583,7 @@ async fn labels_for_ids(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<String>, sqlx
 /// record the proposed label as a non-destructive alias on it.
 async fn apply_canonical_alias(
     pool: &PgPool,
+    actor: &str,
     canonical_id: Option<&str>,
     candidates: &[Uuid],
     proposed_label: &str,
@@ -477,8 +592,50 @@ async fn apply_canonical_alias(
     let Ok(id) = Uuid::parse_str(raw) else { return Ok(()) };
     if candidates.contains(&id) {
         store::add_entity_alias(pool, id, proposed_label).await?;
+        crate::audit::record_new(
+            pool,
+            actor,
+            crate::audit::action::ALIAS_ADDED,
+            Some("entity"),
+            Some(&id.to_string()),
+            serde_json::json!({ "alias": proposed_label }),
+        )
+        .await;
     }
     Ok(())
+}
+
+/// Split long text into overlapping chunks for document ingestion.
+pub const CHUNK_MAX_CHARS: usize = 2_000;
+const CHUNK_OVERLAP_CHARS: usize = 200;
+
+pub fn chunk_text(text: &str, max_chars: usize) -> Vec<String> {
+    if text.chars().count() <= max_chars {
+        return vec![text.trim().to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    let chars: Vec<char> = text.chars().collect();
+    while start < chars.len() {
+        let mut end = (start + max_chars).min(chars.len());
+        // Prefer a sentence/space boundary near the end.
+        if end < chars.len() {
+            if let Some(rel) = chars[start..end]
+                .iter()
+                .rposition(|c| matches!(c, '.' | '!' | '?' | '\n' | ' '))
+            {
+                end = start + rel + 1;
+            }
+        }
+        let chunk: String = chars[start..end].iter().collect();
+        chunks.push(chunk.trim().to_string());
+        if end >= chars.len() {
+            break;
+        }
+        start = end.saturating_sub(CHUNK_OVERLAP_CHARS);
+    }
+    chunks.retain(|c| !c.is_empty());
+    chunks
 }
 
 /// Ingest the extracted text of a stored document as a `file`-sourced note.
@@ -489,6 +646,7 @@ pub async fn ingest_document_text(
     document_id: Uuid,
     text: &str,
     verifier_enabled: bool,
+    agent_id: Option<&str>,
 ) -> Result<IngestResult, anyhow::Error> {
     ingest_note(
         pool,
@@ -500,8 +658,70 @@ pub async fn ingest_document_text(
         "file",
         Some(document_id),
         verifier_enabled,
+        agent_id,
+        None,
     )
     .await
+}
+
+/// Ingest a document, chunking long text into `chunk` notes linked to the
+/// document. Each chunk is an independent idempotent memory write.
+pub async fn ingest_document_chunks(
+    pool: &PgPool,
+    llm: &Arc<OpenCodeClient>,
+    embedder: &Arc<dyn Embedder>,
+    document_id: Uuid,
+    text: &str,
+    verifier_enabled: bool,
+    agent_id: Option<&str>,
+) -> Result<IngestResult, anyhow::Error> {
+    let chunks = chunk_text(text, CHUNK_MAX_CHARS);
+    if chunks.len() <= 1 {
+        return ingest_document_text(
+            pool, llm, embedder, document_id, text, verifier_enabled, agent_id,
+        )
+        .await;
+    }
+
+    let total = chunks.len();
+    let mut combined = ingest_document_text(
+        pool, llm, embedder, document_id, text, verifier_enabled, agent_id,
+    )
+    .await?;
+    combined.duplicate = false;
+    let mut i = 0usize;
+    for chunk in chunks {
+        i += 1;
+        let meta = serde_json::json!({ "chunk": { "index": i, "total": total } });
+        match ingest_note(
+            pool,
+            llm,
+            embedder,
+            &chunk,
+            "chunk",
+            &[],
+            "file",
+            Some(document_id),
+            verifier_enabled,
+            agent_id,
+            Some(meta),
+        )
+        .await
+        {
+            Ok(r) => {
+                combined.claims_added += r.claims_added;
+                combined.claims_quarantined += r.claims_quarantined;
+                combined.claims_rejected += r.claims_rejected;
+                combined.claims_verified += r.claims_verified;
+                combined.contradictions_detected += r.contradictions_detected;
+                combined.claim_ids.extend(r.claim_ids);
+                combined.total_entities = combined.total_entities.max(r.total_entities);
+                combined.total_relations = combined.total_relations.max(r.total_relations);
+            }
+            Err(e) => tracing::warn!(chunk = i, error = %e, "chunk ingest failed"),
+        }
+    }
+    Ok(combined)
 }
 
 #[cfg(test)]
@@ -511,5 +731,25 @@ mod tests {
     #[test]
     fn normalize_is_case_insensitive() {
         assert_eq!(store::normalize_label("  Harry Potter  "), "harry potter");
+    }
+
+    #[test]
+    fn chunk_text_splits_long_documents() {
+        let short = "A tiny note.";
+        assert_eq!(chunk_text(short, CHUNK_MAX_CHARS), vec!["A tiny note."]);
+
+        let long: String = (0..500).map(|i| format!("word {i} ")).collect();
+        assert!(
+            long.chars().count() > CHUNK_MAX_CHARS,
+            "test text must exceed the chunk budget"
+        );
+        let chunks = chunk_text(&long, CHUNK_MAX_CHARS);
+        assert!(chunks.len() >= 2, "long text must split into chunks");
+        assert!(
+            chunks.iter().all(|c| c.chars().count() <= CHUNK_MAX_CHARS + 200),
+            "each chunk stays near the budget"
+        );
+        // Overlap: the first chunk's tail reappears in the second chunk.
+        assert!(!chunks[0].is_empty() && !chunks[1].is_empty());
     }
 }

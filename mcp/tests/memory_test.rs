@@ -55,6 +55,8 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("ingest");
@@ -116,6 +118,8 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("re-ingest");
@@ -332,6 +336,8 @@ async fn claims_evidence_contradiction_and_alias() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("ingest asserted claim");
@@ -444,6 +450,8 @@ async fn claims_evidence_contradiction_and_alias() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("ingest via alias");
@@ -476,6 +484,8 @@ async fn retrieval_reasons_and_reindex_v3() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("ingest");
@@ -557,6 +567,8 @@ async fn verifier_falls_back_without_llm_v4() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("ingest");
@@ -576,10 +588,136 @@ async fn verifier_falls_back_without_llm_v4() {
         "user",
         None,
         true,
+        None,
+        None,
     )
     .await
     .expect("ingest unsupported");
 
     store::delete_note(&pool, note.note_id).await.unwrap();
     store::delete_note(&pool, note2.note_id).await.unwrap();
+}
+
+/// V5: idempotent writes return the same note, audit rows are recorded, and
+/// supersession works.
+#[tokio::test]
+async fn idempotency_audit_and_supersession_v5() {
+    let _guard = DB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: no reachable database");
+        return;
+    };
+    let llm = Arc::new(OpenCodeClient::mock());
+    let embedder = stub_embedder();
+
+    let first = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "Hogwarts has four houses.",
+        "note",
+        &[],
+        "user",
+        None,
+        true,
+        Some("agent-42"),
+        Some(serde_json::json!({ "origin": "test" })),
+    )
+    .await
+    .expect("ingest");
+    assert!(!first.duplicate);
+    assert!(!first.claim_ids.is_empty(), "write receipt includes claim ids");
+
+    // Re-ingesting identical content returns the same note id.
+    let again = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "Hogwarts has four houses.",
+        "note",
+        &[],
+        "user",
+        None,
+        true,
+        Some("agent-42"),
+        None,
+    )
+    .await
+    .expect("re-ingest");
+    assert!(again.duplicate, "re-ingest must be flagged duplicate");
+    assert_eq!(again.note_id, first.note_id, "same note id");
+    assert_eq!(again.claim_ids, first.claim_ids, "same claim receipt");
+
+    // Agent attribution + metadata merged onto the note.
+    let note = store::get_note(&pool, first.note_id).await.unwrap().unwrap();
+    assert_eq!(note.metadata["agent"], "agent-42");
+    assert_eq!(note.metadata["origin"], "test");
+
+    // Audit rows were written for note + claim creation by the acting agent.
+    let created: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, actor FROM audit_log WHERE target_id = $1 AND action IN ('note.created','claim.created')",
+    )
+    .bind(first.note_id.to_string())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        created.iter().any(|(a, _)| a == "note.created"),
+        "audit must record note creation: {created:?}"
+    );
+    assert!(
+        created.iter().any(|(a, _)| a == "claim.created"),
+        "audit must record claim creation: {created:?}"
+    );
+    assert!(
+        created.iter().all(|(_, actor)| actor == "agent-42"),
+        "audit actor is the agent: {created:?}"
+    );
+
+    // Supersession: a corrected claim marks the original superseded.
+    let claim_row = crate::claims::get_claim_row(&pool, first.claim_ids[0])
+        .await
+        .unwrap()
+        .expect("claim row");
+    let corrected = crate::claims::insert_claim(
+        &pool,
+        &crate::claims::NewClaim {
+            note_id: claim_row.note_id,
+            subject_id: claim_row.subject_id,
+            proposed_subject_label: &claim_row.proposed_subject_label,
+            predicate: "contains",
+            object_id: claim_row.object_id,
+            proposed_object_label: &claim_row.proposed_object_label,
+            modality: &claim_row.modality,
+            confidence: 1.0,
+            status: "active",
+            evidence_span: claim_row.evidence_span.clone(),
+            evidence_offset: claim_row.evidence_offset,
+            extraction_version: &claim_row.extraction_version,
+            source: "user",
+            source_document_id: None,
+            metadata: serde_json::json!({ "corrected": true, "supersedes": claim_row.id }),
+        },
+    )
+    .await
+    .unwrap();
+    crate::claims::supersede_claim(&pool, claim_row.id, corrected.id)
+        .await
+        .unwrap();
+
+    let superseded = crate::claims::get_claim_row(&pool, claim_row.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(superseded.status, "superseded");
+    assert_eq!(superseded.metadata["superseded_by"], corrected.id.to_string());
+
+    // Stats reflect the counts.
+    let by_status = store::count_claims_by_status(&pool).await.unwrap();
+    assert!(
+        by_status.iter().any(|(s, c)| s == "superseded" && *c >= 1),
+        "superseded claims counted: {by_status:?}"
+    );
+
+    store::delete_note(&pool, first.note_id).await.unwrap();
 }

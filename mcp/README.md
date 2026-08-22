@@ -57,7 +57,20 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
 | `get_claim(id)` | One evidence-backed claim + its source note + contradictions |
 | `list_claims(entity_label, status?, limit?)` | Claims about an entity, filtered by status |
 | `reindex_embeddings(limit?)` | Re-embed rows whose vectors are missing or from an older model |
-| `recall_memory(query, top_k?)` | **Flagship**: hybrid retrieval → compact context block (summaries + subgraph + claims) |
+| `forget_entity(label)` | Permanently forget an entity + derived memory (audited, hard delete) |
+| `prune_notes(days, limit?)` | Audited retention cleanup of old notes |
+| `correct_claim(id, predicate?, object_label?)` | Supersede a claim and commit the corrected version |
+| `memory_stats` | Counts, claim statuses, verifier stats, embedding coverage |
+| `recall_memory(query, top_k?, include_contradicted?)` | **Flagship**: hybrid retrieval → compact context block (summaries + subgraph + claims) |
+
+### Stable tool contract
+
+The tools above are the long-term public contract for the agent memory
+service. Internal schema and retrieval internals may evolve, but these tool
+names/semantics are stable. Writes are idempotent (identical content returns
+the existing note), every significant mutation is written to `audit_log`
+(actor, action, before/after), and long documents are chunked into `chunk`
+notes linked to the source document.
 
 ## Setup
 
@@ -129,6 +142,8 @@ Schema lives in `mcp/migrations/` (applied at startup):
   rejected/quarantined), evidence span, extraction version, source
 - `claim_relations` / `claim_contradictions` — claim → relation projection and
   contradiction pairs
+- `audit_log` — durable record of significant memory mutations (actor, action,
+  before/after)
 - `documents` — file metadata + `storage_key` into the disk blob store
 - `note_entities` / `note_relations` — provenance junctions
 - `006_embeddings` — requires the `vector` extension (pgvector image)
