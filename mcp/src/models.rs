@@ -52,6 +52,61 @@ pub struct Document {
     pub created_at: DateTime<Utc>,
 }
 
+/// A durable, evidence-backed statement about two entities (V2).
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct Claim {
+    pub id: Uuid,
+    pub note_id: Uuid,
+    pub subject_id: Uuid,
+    pub proposed_subject_label: String,
+    pub predicate: String,
+    pub object_id: Uuid,
+    pub proposed_object_label: String,
+    pub modality: String,
+    pub confidence: f32,
+    pub status: String,
+    pub evidence_span: Option<String>,
+    pub evidence_offset: Option<i32>,
+    pub extraction_version: String,
+    pub source: String,
+    pub source_document_id: Option<Uuid>,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A claim with its resolved endpoint labels and note content, for the
+/// `get_claim` / `list_claims` tools.
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ClaimView {
+    pub id: Uuid,
+    pub subject_label: String,
+    pub predicate: String,
+    pub object_label: String,
+    pub modality: String,
+    pub confidence: f32,
+    pub status: String,
+    pub evidence_span: Option<String>,
+    pub evidence_offset: Option<i32>,
+    pub extraction_version: String,
+    pub note_content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A contradiction link between two claims (with labels for display).
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ContradictionView {
+    pub claim_a: Uuid,
+    pub claim_b: Uuid,
+    pub subject_label: String,
+    pub predicate: String,
+    pub object_label: String,
+    pub modality_a: String,
+    pub modality_b: String,
+    pub detected_by: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// What `ingest_note` produced.
 #[derive(Debug, Clone, Serialize)]
 pub struct IngestResult {
@@ -59,6 +114,10 @@ pub struct IngestResult {
     pub summary: Option<String>,
     pub entities_added: Vec<String>,
     pub relations_added: Vec<String>,
+    pub claims_added: i64,
+    pub claims_quarantined: i64,
+    pub claims_rejected: i64,
+    pub contradictions_detected: i64,
     pub total_entities: i64,
     pub total_relations: i64,
 }

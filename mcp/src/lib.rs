@@ -4,9 +4,11 @@
 //! directly; the binary (`main.rs`) wires this up over the MCP stdio
 //! transport.
 
+pub mod claims;
 pub mod config;
 pub mod db;
 pub mod embed;
+pub mod entity;
 pub mod files;
 pub mod graph;
 pub mod ingest;
@@ -15,3 +17,4 @@ pub mod recall;
 pub mod server;
 pub mod store;
 pub mod summary;
+pub mod validate;

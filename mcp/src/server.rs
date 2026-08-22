@@ -125,6 +125,22 @@ pub struct RecallArgs {
     pub top_k: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetClaimArgs {
+    #[schemars(description = "Claim id (UUID)")]
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListClaimsArgs {
+    #[schemars(description = "Entity label to list claims for (subject or object)")]
+    pub entity_label: String,
+    #[schemars(description = "Filter by status: active | contradicted | superseded | rejected | quarantined")]
+    pub status: Option<String>,
+    #[schemars(description = "Max claims to return (1-200)")]
+    pub limit: Option<i64>,
+}
+
 fn parse_id(raw: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(raw.trim())
         .map_err(|_| McpError::invalid_params("invalid note id (expected UUID)", None))
@@ -402,5 +418,58 @@ impl MemoryServer {
         .await
         .map_err(|e| self.err(&e.to_string()))?;
         Ok(self.result_json(&result))
+    }
+
+    /// Fetch one evidence-backed claim with its supporting note and any
+    /// contradictions.
+    #[tool(description = "Get a claim with its evidence, source note, and contradictions")]
+    async fn get_claim(
+        &self,
+        Parameters(args): Parameters<GetClaimArgs>,
+    ) -> Result<String, McpError> {
+        let id = parse_id(&args.id)?;
+        let claim = crate::claims::get_claim(&self.pool, id)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?
+            .ok_or_else(|| McpError::invalid_params("claim not found", None))?;
+        let contradictions = crate::claims::contradictions_for_claim(&self.pool, id)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        Ok(self.result_json(&json!({
+            "claim": claim,
+            "contradictions": contradictions,
+        })))
+    }
+
+    /// List evidence-backed claims touching an entity, optionally filtered by
+    /// status.
+    #[tool(description = "List claims about an entity (subject or object), by status")]
+    async fn list_claims(
+        &self,
+        Parameters(args): Parameters<ListClaimsArgs>,
+    ) -> Result<String, McpError> {
+        let label = args.entity_label.trim();
+        if label.is_empty() {
+            return Err(McpError::invalid_params("entity_label must not be empty", None));
+        }
+        let entity = store::find_entity_by_normalized(&self.pool, &store::normalize_label(label))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?;
+        let entity = match entity {
+            Some(e) => e,
+            None => {
+                return Ok(format!("Entity \"{label}\" not found."));
+            }
+        };
+        let status = args.status.as_deref().filter(|s| !s.is_empty());
+        let claims = crate::claims::claims_for_entity(
+            &self.pool,
+            entity.id,
+            status,
+            args.limit.unwrap_or(50),
+        )
+        .await
+        .map_err(|e| self.err(&e.to_string()))?;
+        Ok(self.result_json(&claims))
     }
 }

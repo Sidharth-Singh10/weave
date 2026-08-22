@@ -23,6 +23,13 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
 - **Knowledge graph** — each note is extracted into entities + relations,
   resolved against the persisted graph (no duplicate concepts), with
   provenance linking notes → nodes/edges.
+- **Claims** — the durable memory unit: every extracted statement is
+  validated (labels, predicates, self-loops), resolved deterministically
+  (exact → alias → create), given an evidence span from the source note, a
+  modality (asserted/negated/suggested/conditional) and confidence.
+  Unsupported claims are quarantined; contradicting claims (same triple,
+  opposing modality) are linked and both marked `contradicted` — nothing is
+  silently overwritten.
 - **Files** — documents, PDFs, images, audio are stored as blobs on disk with
   metadata; text is extracted for text-ish files and ingested.
 - **Retrieval (GraphRAG)** — hybrid: vector (pgvector) + full-text (Postgres
@@ -41,6 +48,8 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
 | `search(query, limit?)` | Full-text notes + keyword entities |
 | `get_node(label)` | An entity and the relations touching it |
 | `get_related(label, depth?)` | BFS subgraph around an entity (up to depth 3) |
+| `get_claim(id)` | One evidence-backed claim + its source note + contradictions |
+| `list_claims(entity_label, status?, limit?)` | Claims about an entity, filtered by status |
 | `recall_memory(query, top_k?)` | **Flagship**: hybrid retrieval → compact context block (summaries + subgraph) |
 
 ## Setup
@@ -99,6 +108,11 @@ Schema lives in `mcp/migrations/` (applied at startup):
   `tsvector`, `embedding vector(384)` (pgvector, HNSW index)
 - `entities` — normalized-unique labels, kind, aliases, description, embedding
 - `relations` — (source, target, relation) unique, weight
+- `claims` — durable evidence-backed statements: endpoints + proposed labels,
+  predicate, modality, confidence, status (active/contradicted/superseded/
+  rejected/quarantined), evidence span, extraction version, source
+- `claim_relations` / `claim_contradictions` — claim → relation projection and
+  contradiction pairs
 - `documents` — file metadata + `storage_key` into the disk blob store
 - `note_entities` / `note_relations` — provenance junctions
 - `006_embeddings` — requires the `vector` extension (pgvector image)

@@ -119,6 +119,25 @@ pub async fn find_entity_by_alias(
     .await
 }
 
+/// All entities whose aliases contain `normalized` (case-insensitive). More
+/// than one hit means the alias is ambiguous and should not auto-resolve.
+pub async fn find_entities_by_alias(
+    pool: &PgPool,
+    normalized: &str,
+) -> Result<Vec<Entity>, sqlx::Error> {
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities
+        WHERE EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) = lower($1))
+        ORDER BY created_at
+        "#,
+    )
+    .bind(normalized)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn insert_entity(pool: &PgPool, label: &str, kind: &str) -> Result<Entity, sqlx::Error> {
     sqlx::query_as::<_, Entity>(
         r#"

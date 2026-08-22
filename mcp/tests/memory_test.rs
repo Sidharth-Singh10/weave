@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use weave_core::llm::OpenCodeClient;
-use weave_mcp::{db, embed, ingest, store};
+use weave_mcp::{claims, db, embed, ingest, store};
 
 /// Serializes DB-backed integration tests so they cannot corrupt each other's
 /// fixtures (they share the `weave_mcp` database).
@@ -304,4 +304,147 @@ async fn recall_roundtrip_via_mcp_protocol() {
         )
         .await
         .expect("call delete_note");
+}
+
+/// V2: ingest stores evidence-backed claims; contradiction handling and
+/// alias resolution work on the persisted graph.
+#[tokio::test]
+async fn claims_evidence_contradiction_and_alias() {
+    let _guard = DB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: no reachable database");
+        return;
+    };
+    let llm = Arc::new(OpenCodeClient::mock());
+    let embedder = stub_embedder();
+
+    // Ingest an asserted claim; mock extractor handles "X has a Y." via the
+    // "has" pattern.
+    let note = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "Hogwarts has a secret chamber.",
+        "note",
+        &[],
+        "user",
+        None,
+    )
+    .await
+    .expect("ingest asserted claim");
+    assert!(note.claims_added >= 1, "asserted claim stored");
+
+    let hogwarts = store::find_entity_by_normalized(&pool, &store::normalize_label("Hogwarts"))
+        .await
+        .unwrap()
+        .expect("hogwarts entity");
+    let views = claims::claims_for_entity(&pool, hogwarts.id, None, 50).await.unwrap();
+    let asserted = views
+        .iter()
+        .find(|c| c.predicate == "has" && c.status == "active")
+        .expect("asserted has-claim from ingest");
+
+    // Evidence + provenance + version recorded.
+    let full = claims::get_claim(&pool, asserted.id).await.unwrap().unwrap();
+    assert!(full.evidence_span.is_some(), "evidence span recorded");
+    assert!(full.note_content.contains("Hogwarts"), "source note linked");
+    assert_eq!(full.modality, "asserted");
+    assert_eq!(full.confidence, 1.0);
+    assert!(!full.extraction_version.is_empty(), "extractor version recorded");
+
+    // A directly-inserted negated claim on the same triple contradicts it.
+    let chamber = store::find_entity_by_normalized(&pool, &store::normalize_label("secret chamber"))
+        .await
+        .unwrap()
+        .expect("secret chamber entity");
+    let negated = claims::insert_claim(
+        &pool,
+        &claims::NewClaim {
+            note_id: note.note_id,
+            subject_id: hogwarts.id,
+            proposed_subject_label: "Hogwarts",
+            predicate: "has",
+            object_id: chamber.id,
+            proposed_object_label: "secret chamber",
+            modality: "negated",
+            confidence: 0.8,
+            status: "active",
+            evidence_span: Some("Hogwarts has no secret chamber.".to_string()),
+            evidence_offset: Some(0),
+            extraction_version: "1",
+            source: "user",
+            source_document_id: None,
+            metadata: serde_json::json!({}),
+        },
+    )
+    .await
+    .unwrap();
+
+    let opponents = claims::find_contradicting_claims(
+        &pool,
+        hogwarts.id,
+        "has",
+        chamber.id,
+        "negated",
+    )
+    .await
+    .unwrap();
+    assert!(
+        opponents.iter().any(|c| c.id == asserted.id),
+        "the asserted claim must oppose the negated one"
+    );
+    claims::set_claim_status(&pool, negated.id, "contradicted").await.unwrap();
+    claims::set_claim_status(&pool, asserted.id, "contradicted").await.unwrap();
+    claims::link_contradiction(&pool, negated.id, asserted.id).await.unwrap();
+
+    let contradictions = claims::contradictions_for_claim(&pool, asserted.id)
+        .await
+        .unwrap();
+    assert_eq!(contradictions.len(), 1, "contradiction junction recorded");
+    assert!(
+        claims::modalities_oppose(&contradictions[0].modality_a, &contradictions[0].modality_b),
+        "modalities must oppose"
+    );
+
+    // Both claims are retrievable with status contradicted (nothing lost).
+    let after = claims::claims_for_entity(&pool, hogwarts.id, Some("contradicted"), 50)
+        .await
+        .unwrap();
+    assert!(
+        after.len() >= 2,
+        "both contradicting claims remain addressable: {after:?}"
+    );
+
+    // Alias resolution: reference an entity by a stored alias.
+    let rust = match store::find_entity_by_normalized(&pool, &store::normalize_label("Rust"))
+        .await
+        .unwrap()
+    {
+        Some(e) => e,
+        None => store::insert_entity(&pool, "Rust", "concept").await.unwrap(),
+    };
+    sqlx::query(
+        "UPDATE entities SET aliases = array_append(aliases, 'The Rust Lang') WHERE id = $1",
+    )
+    .bind(rust.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let alias_note = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "The Rust Lang is a systems programming language.",
+        "note",
+        &[],
+        "user",
+        None,
+    )
+    .await
+    .expect("ingest via alias");
+    assert!(alias_note.total_entities >= 1);
+
+    // Cleanup notes (claims cascade with them).
+    store::delete_note(&pool, note.note_id).await.unwrap();
 }
