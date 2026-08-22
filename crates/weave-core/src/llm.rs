@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 
 /// Provider-reported token usage for one LLM call.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct TokenUsage {
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -15,6 +15,24 @@ pub struct TokenUsage {
 pub struct LlmOutput {
     pub json: serde_json::Value,
     pub usage: Option<TokenUsage>,
+}
+
+/// The full request body sent to the provider and the raw response text, so
+/// the pipeline tracer can show exactly what a real call sends and receives.
+#[derive(Debug, Clone)]
+pub struct LlmTrace {
+    /// The complete JSON body posted to `/chat/completions`.
+    pub request_body: serde_json::Value,
+    /// The raw response text (before JSON parsing / fence stripping).
+    pub raw_response: String,
+}
+
+/// A chat completion result plus the wire-level trace of the call.
+#[derive(Debug)]
+pub struct TracedLlmOutput {
+    pub json: serde_json::Value,
+    pub usage: Option<TokenUsage>,
+    pub trace: LlmTrace,
 }
 
 fn parse_usage(raw: &serde_json::Value) -> Option<TokenUsage> {
@@ -83,6 +101,21 @@ impl OpenCodeClient {
     /// stripped before parsing. On a transient 5xx / 429 the request is
     /// retried once.
     pub async fn chat_json(&self, system: &str, user: &str) -> anyhow::Result<LlmOutput> {
+        let out = self.chat_json_traced(system, user).await?;
+        Ok(LlmOutput {
+            json: out.json,
+            usage: out.usage,
+        })
+    }
+
+    /// [`chat_json`] plus the wire-level [`LlmTrace`] of the call. Both share
+    /// this single implementation so the trace is byte-for-byte identical to
+    /// what a real request sends.
+    pub async fn chat_json_traced(
+        &self,
+        system: &str,
+        user: &str,
+    ) -> anyhow::Result<TracedLlmOutput> {
         let key = self
             .api_key
             .as_deref()
@@ -137,9 +170,13 @@ impl OpenCodeClient {
         let json = serde_json::from_str(cleaned)
             .with_context(|| format!("model output was not JSON: {}", truncate(cleaned, 200)))?;
 
-        Ok(LlmOutput {
+        Ok(TracedLlmOutput {
             json,
             usage: parse_usage(&raw),
+            trace: LlmTrace {
+                request_body: body,
+                raw_response: text,
+            },
         })
     }
 

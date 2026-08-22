@@ -25,6 +25,7 @@ pub fn routes() -> Router<AppState> {
         .merge(roles::routes())
         .merge(policies::routes())
         .merge(analytics::routes())
+        .merge(crate::pipeline::routes())
         .route("/api/admin/audit", get(list_audit))
 }
 

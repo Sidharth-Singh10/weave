@@ -138,32 +138,71 @@ Rules:
 - Respond with strict JSON only, matching: {"nodes":[{"label":"...","kind":"person|place|org|event|object|concept"}],"edges":[{"source_label":"...","target_label":"...","relation":"..."}]}
 "#;
 
+/// Everything the pipeline tracer needs to show how one ingest reached the
+/// LLM and what came back.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExtractTrace {
+    /// The system prompt sent as the `system` message.
+    pub system_prompt: String,
+    /// The user message: existing node labels + edges + the new note.
+    pub user_prompt: String,
+    /// True when the deterministic mock extractor was used instead of the LLM.
+    pub mock_fallback: bool,
+    /// The full request body posted to `/chat/completions` (when LLM used).
+    pub llm_request: Option<serde_json::Value>,
+    /// The raw provider response text (when LLM used).
+    pub llm_raw_response: Option<String>,
+    /// The parsed JSON the model produced (when LLM used).
+    pub llm_json: Option<serde_json::Value>,
+    /// Provider-reported token usage (when LLM used).
+    pub usage: Option<TokenUsage>,
+}
+
 pub async fn extract_delta(
     client: &OpenCodeClient,
     req: &IngestRequest,
 ) -> (GraphDelta, Option<TokenUsage>) {
+    let (delta, usage, _trace) = extract_delta_traced(client, req).await;
+    (delta, usage)
+}
+
+/// The real extraction pipeline plus a full trace of the LLM interaction.
+/// `extract_delta` shares this implementation, so the trace reflects exactly
+/// what a live ingest sends and receives.
+pub async fn extract_delta_traced(
+    client: &OpenCodeClient,
+    req: &IngestRequest,
+) -> (GraphDelta, Option<TokenUsage>, ExtractTrace) {
     if client.available() {
         match extract_with_llm(client, req).await {
-            Ok(delta) => return delta,
+            Ok((delta, trace)) => return (delta, trace.usage, trace),
             Err(e) => {
                 tracing::warn!("LLM extraction failed, falling back to mock: {e}");
             }
         }
     }
-    (extract_mock(req), None)
+    let mock_trace = ExtractTrace {
+        system_prompt: SYSTEM_PROMPT.to_string(),
+        user_prompt: build_ingest_user_prompt(req),
+        mock_fallback: true,
+        llm_request: None,
+        llm_raw_response: None,
+        llm_json: None,
+        usage: None,
+    };
+    (extract_mock(req), None, mock_trace)
 }
 
-async fn extract_with_llm(
-    client: &OpenCodeClient,
-    req: &IngestRequest,
-) -> anyhow::Result<(GraphDelta, Option<TokenUsage>)> {
+/// The exact user message sent to the LLM on ingest: the existing graph
+/// (node labels + edges) followed by the new note.
+pub fn build_ingest_user_prompt(req: &IngestRequest) -> String {
     let existing: Vec<String> = req.nodes.iter().map(|n| n.label.clone()).collect();
     let existing_edges: Vec<String> = req
         .edges
         .iter()
         .map(|e| format!("{} -[{}]-> {}", e.source_label, e.relation, e.target_label))
         .collect();
-    let user = format!(
+    format!(
         "Existing node labels: {}\nExisting edges: {}\n\nNew note: {}",
         if existing.is_empty() {
             "(none)".to_string()
@@ -176,13 +215,29 @@ async fn extract_with_llm(
             existing_edges.join("; ")
         },
         req.text
-    );
+    )
+}
 
-    let out = client.chat_json(SYSTEM_PROMPT, &user).await?;
-    let mut delta: GraphDelta = serde_json::from_value(out.json)?;
-    dedup_against_existing(&mut delta, &existing);
+async fn extract_with_llm(
+    client: &OpenCodeClient,
+    req: &IngestRequest,
+) -> anyhow::Result<(GraphDelta, ExtractTrace)> {
+    let user = build_ingest_user_prompt(req);
+
+    let out = client.chat_json_traced(SYSTEM_PROMPT, &user).await?;
+    let mut delta: GraphDelta = serde_json::from_value(out.json.clone())?;
+    dedup_against_existing(&mut delta, &req.nodes.iter().map(|n| n.label.clone()).collect::<Vec<_>>());
     assign_ids(&mut delta, &req.nodes);
-    Ok((delta, out.usage))
+    let trace = ExtractTrace {
+        system_prompt: SYSTEM_PROMPT.to_string(),
+        user_prompt: user,
+        mock_fallback: false,
+        llm_request: Some(out.trace.request_body),
+        llm_raw_response: Some(out.trace.raw_response),
+        llm_json: Some(out.json),
+        usage: out.usage,
+    };
+    Ok((delta, trace))
 }
 
 /// Case-insensitive match, plus first-name / prefix matching so

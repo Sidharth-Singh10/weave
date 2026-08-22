@@ -39,6 +39,7 @@ export function AdminNav() {
     { href: "/admin/users", label: "Users" },
     { href: "/admin/roles", label: "Roles" },
     { href: "/admin/policies", label: "Policies" },
+    { href: "/admin/pipeline", label: "Pipeline" },
     { href: "/admin/analytics", label: "Analytics" },
     { href: "/admin/audit", label: "Audit Log" },
   ];

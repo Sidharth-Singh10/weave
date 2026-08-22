@@ -312,3 +312,30 @@ export async function adminAudit(params: {
   const qs = q.toString();
   return request(`/api/admin/audit${qs ? `?${qs}` : ""}`);
 }
+
+// ---------------------------------------------------------------------------
+// Pipeline tracer API
+// ---------------------------------------------------------------------------
+
+export interface PipelineStage {
+  stage: string;
+  status: string;
+  duration_ms: number;
+  detail: Record<string, unknown>;
+}
+
+export interface PipelineTrace {
+  endpoint: string;
+  llm_mode: string;
+  total_ms: number;
+  stages: PipelineStage[];
+  delta: GraphDelta;
+}
+
+/** Run the ingest pipeline in observe-only mode and return a full trace. */
+export async function adminRunPipeline(req: IngestRequest): Promise<PipelineTrace> {
+  return request<PipelineTrace>("/api/admin/pipeline/ingest", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}

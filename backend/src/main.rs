@@ -7,6 +7,7 @@ mod db;
 mod error;
 mod graph;
 mod organize;
+mod pipeline;
 mod policy;
 mod ratelimit;
 mod redis_store;
