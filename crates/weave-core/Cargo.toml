@@ -11,3 +11,6 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls", 
 regex = "1.13.1"
 anyhow = "1.0.104"
 tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }

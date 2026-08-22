@@ -7,3 +7,4 @@
 pub mod extract;
 pub mod llm;
 pub mod models;
+pub mod subgraph;

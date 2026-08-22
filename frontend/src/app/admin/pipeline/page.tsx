@@ -216,6 +216,7 @@ function ExtractDetail({ stage }: { stage: PipelineStage }) {
   const d = stage.detail as Record<string, unknown>;
   return (
     <div className="space-y-3">
+      <SubgraphSummary d={d} />
       <div>
         <h4 className="mb-1 text-xs font-medium text-faint">System prompt</h4>
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-surface p-3 font-mono text-xs text-muted">
@@ -223,7 +224,7 @@ function ExtractDetail({ stage }: { stage: PipelineStage }) {
         </pre>
       </div>
       <div>
-        <h4 className="mb-1 text-xs font-medium text-faint">User prompt (existing graph + new note)</h4>
+        <h4 className="mb-1 text-xs font-medium text-faint">User prompt (new note + selected graph + rules)</h4>
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-surface p-3 font-mono text-xs text-muted">
           {String(d.user_prompt ?? "")}
         </pre>
@@ -236,6 +237,31 @@ function ExtractDetail({ stage }: { stage: PipelineStage }) {
           </pre>
         </div>
       )}
+    </div>
+  );
+}
+
+function SubgraphSummary({ d }: { d: Record<string, unknown> }) {
+  const num = (v: unknown) => (typeof v === "number" ? v : 0);
+  const anchors = Array.isArray(d.anchors) ? (d.anchors as string[]) : [];
+  const rows = [
+    { label: "anchors", value: anchors.length ? anchors.join(", ") : "(none)" },
+    { label: "selected", value: `${num(d.subgraph_node_count)} nodes · ${num(d.subgraph_edge_count)} edges` },
+    { label: "omitted", value: `${num(d.omitted_node_count)} nodes · ${num(d.omitted_edge_count)} edges` },
+    { label: "est. tokens", value: String(num(d.estimated_tokens)) },
+    { label: "hops", value: String(num(d.max_hops)) },
+  ];
+  return (
+    <div>
+      <h4 className="mb-1.5 text-xs font-medium text-faint">Subgraph selection (bounded context)</h4>
+      <div className="space-y-1 rounded-lg border border-line bg-surface p-3">
+        {rows.map((r) => (
+          <div key={r.label} className="flex gap-2 text-xs">
+            <span className="w-16 shrink-0 text-faint">{r.label}</span>
+            <span className="min-w-0 break-words font-mono text-muted">{r.value}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

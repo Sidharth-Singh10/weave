@@ -138,13 +138,17 @@ Rules:
 - Respond with strict JSON only, matching: {"nodes":[{"label":"...","kind":"person|place|org|event|object|concept"}],"edges":[{"source_label":"...","target_label":"...","relation":"..."}]}
 "#;
 
+/// Extraction behavior version, recorded in traces so memory written under one
+/// prompt/schema version stays auditable after the extractor changes.
+pub const EXTRACTOR_VERSION: &str = "1";
+
 /// Everything the pipeline tracer needs to show how one ingest reached the
 /// LLM and what came back.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractTrace {
     /// The system prompt sent as the `system` message.
     pub system_prompt: String,
-    /// The user message: existing node labels + edges + the new note.
+    /// The user message: the new note + the selected graph context + rules.
     pub user_prompt: String,
     /// True when the deterministic mock extractor was used instead of the LLM.
     pub mock_fallback: bool,
@@ -156,6 +160,17 @@ pub struct ExtractTrace {
     pub llm_json: Option<serde_json::Value>,
     /// Provider-reported token usage (when LLM used).
     pub usage: Option<TokenUsage>,
+    /// Labels used as BFS seeds into the existing graph.
+    pub anchors: Vec<String>,
+    pub subgraph_node_count: usize,
+    pub subgraph_edge_count: usize,
+    pub omitted_node_count: usize,
+    pub omitted_edge_count: usize,
+    /// Estimated prompt tokens of the selected graph context (chars ÷ 4).
+    pub estimated_tokens: i64,
+    /// Deepest hop actually included in the graph context.
+    pub max_hops: usize,
+    pub extractor_version: String,
 }
 
 pub async fn extract_delta(
@@ -173,8 +188,12 @@ pub async fn extract_delta_traced(
     client: &OpenCodeClient,
     req: &IngestRequest,
 ) -> (GraphDelta, Option<TokenUsage>, ExtractTrace) {
+    // Bound the context: only the subgraph relevant to the note reaches the
+    // LLM. Dedup/ID assignment below still uses the FULL request graph.
+    let sel = crate::subgraph::select_relevant_subgraph(&req.text, &req.nodes, &req.edges);
+
     if client.available() {
-        match extract_with_llm(client, req).await {
+        match extract_with_llm(client, req, &sel).await {
             Ok((delta, trace)) => return (delta, trace.usage, trace),
             Err(e) => {
                 tracing::warn!("LLM extraction failed, falling back to mock: {e}");
@@ -183,46 +202,56 @@ pub async fn extract_delta_traced(
     }
     let mock_trace = ExtractTrace {
         system_prompt: SYSTEM_PROMPT.to_string(),
-        user_prompt: build_ingest_user_prompt(req),
+        user_prompt: build_ingest_user_prompt(&req.text, &sel.nodes, &sel.edges),
         mock_fallback: true,
         llm_request: None,
         llm_raw_response: None,
         llm_json: None,
         usage: None,
+        anchors: sel.anchors.clone(),
+        subgraph_node_count: sel.subgraph_node_count,
+        subgraph_edge_count: sel.subgraph_edge_count,
+        omitted_node_count: sel.omitted_node_count,
+        omitted_edge_count: sel.omitted_edge_count,
+        estimated_tokens: sel.estimated_tokens,
+        max_hops: sel.max_hops,
+        extractor_version: EXTRACTOR_VERSION.to_string(),
     };
     (extract_mock(req), None, mock_trace)
 }
 
-/// The exact user message sent to the LLM on ingest: the existing graph
-/// (node labels + edges) followed by the new note.
-pub fn build_ingest_user_prompt(req: &IngestRequest) -> String {
-    let existing: Vec<String> = req.nodes.iter().map(|n| n.label.clone()).collect();
-    let existing_edges: Vec<String> = req
-        .edges
-        .iter()
-        .map(|e| format!("{} -[{}]-> {}", e.source_label, e.relation, e.target_label))
-        .collect();
+/// The exact user message sent to the LLM on ingest: the new note, the
+/// selected graph context, and the grounding rules.
+pub fn build_ingest_user_prompt(text: &str, nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
+    let node_str = if nodes.is_empty() {
+        "(none)".to_string()
+    } else {
+        nodes
+            .iter()
+            .map(|n| n.label.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let edge_str = if edges.is_empty() {
+        "(none)".to_string()
+    } else {
+        edges
+            .iter()
+            .map(|e| format!("{} -[{}]-> {}", e.source_label, e.relation, e.target_label))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
     format!(
-        "Existing node labels: {}\nExisting edges: {}\n\nNew note: {}",
-        if existing.is_empty() {
-            "(none)".to_string()
-        } else {
-            existing.join(", ")
-        },
-        if existing_edges.is_empty() {
-            "(none)".to_string()
-        } else {
-            existing_edges.join("; ")
-        },
-        req.text
+        "NEW NOTE\n---------\n{text}\n\nRELEVANT EXISTING GRAPH\n-----------------------\nNodes: [{node_str}]\nEdges: [{edge_str}]\n\nRULES\n-----\n- Extract facts supported by the new note.\n- Use the existing graph context for canonicalization / deduplication.\n- Do not invent facts solely from graph context.\n- Prefer canonical existing labels when the note refers to the same entity."
     )
 }
 
 async fn extract_with_llm(
     client: &OpenCodeClient,
     req: &IngestRequest,
+    sel: &crate::subgraph::SubgraphSelection,
 ) -> anyhow::Result<(GraphDelta, ExtractTrace)> {
-    let user = build_ingest_user_prompt(req);
+    let user = build_ingest_user_prompt(&req.text, &sel.nodes, &sel.edges);
 
     let out = client.chat_json_traced(SYSTEM_PROMPT, &user).await?;
     let mut delta: GraphDelta = serde_json::from_value(out.json.clone())?;
@@ -236,6 +265,14 @@ async fn extract_with_llm(
         llm_raw_response: Some(out.trace.raw_response),
         llm_json: Some(out.json),
         usage: out.usage,
+        anchors: sel.anchors.clone(),
+        subgraph_node_count: sel.subgraph_node_count,
+        subgraph_edge_count: sel.subgraph_edge_count,
+        omitted_node_count: sel.omitted_node_count,
+        omitted_edge_count: sel.omitted_edge_count,
+        estimated_tokens: sel.estimated_tokens,
+        max_hops: sel.max_hops,
+        extractor_version: EXTRACTOR_VERSION.to_string(),
     };
     Ok((delta, trace))
 }
@@ -539,5 +576,145 @@ mod tests {
         assert_eq!(clean_object("a wizard"), "wizard");
         assert_eq!(clean_object("the spiders"), "spiders");
         assert_eq!(clean_object("three 4th year students"), "4th year students");
+    }
+
+    // -- subgraph-bounded prompt (V1) --------------------------------------
+
+    fn full_req(text: &str) -> IngestRequest {
+        IngestRequest {
+            text: text.to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: Some("node-harry-potter".to_string()),
+                    label: "Harry Potter".to_string(),
+                    kind: "person".to_string(),
+                },
+                GraphNode {
+                    id: Some("node-ron".to_string()),
+                    label: "Ron".to_string(),
+                    kind: "person".to_string(),
+                },
+                GraphNode {
+                    id: Some("node-hermione".to_string()),
+                    label: "Hermione".to_string(),
+                    kind: "person".to_string(),
+                },
+                GraphNode {
+                    id: Some("node-quantum".to_string()),
+                    label: "Quantum Physics".to_string(),
+                    kind: "concept".to_string(),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    id: None,
+                    source_id: None,
+                    target_id: None,
+                    source_label: "Harry Potter".to_string(),
+                    target_label: "Ron".to_string(),
+                    relation: "friend of".to_string(),
+                },
+                GraphEdge {
+                    id: None,
+                    source_id: None,
+                    target_id: None,
+                    source_label: "Ron".to_string(),
+                    target_label: "Hermione".to_string(),
+                    relation: "friend of".to_string(),
+                },
+            ],
+        }
+    }
+
+    /// The prompt must carry only the subgraph relevant to the note: the
+    /// unrelated isolated node is omitted while 1-hop and 2-hop neighbors of
+    /// the mentioned entity are included.
+    #[test]
+    fn traced_prompt_carries_only_relevant_subgraph() {
+        let client = OpenCodeClient::mock();
+        let req = full_req("Harry likes quidditch.");
+        let (_, _, trace) = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(extract_delta_traced(&client, &req));
+
+        assert!(trace.user_prompt.contains("Harry Potter"), "anchor included");
+        assert!(trace.user_prompt.contains("Ron"), "1-hop neighbor included");
+        assert!(trace.user_prompt.contains("Hermione"), "2-hop neighbor included");
+        assert!(
+            !trace.user_prompt.contains("Quantum Physics"),
+            "unrelated isolated node must not reach the prompt"
+        );
+        assert_eq!(trace.omitted_node_count, 1);
+        assert_eq!(trace.max_hops, 2);
+        assert!(trace.anchors.iter().any(|a| a == "harry potter"));
+    }
+
+    /// Empty-match fallback: the note is sent alone with explicit empty graph
+    /// context (never the full graph).
+    #[test]
+    fn traced_prompt_falls_back_to_note_only() {
+        let client = OpenCodeClient::mock();
+        let req = full_req("Completely unrelated topic.");
+        let (_, _, trace) = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(extract_delta_traced(&client, &req));
+
+        assert!(trace.user_prompt.contains("Nodes: [(none)]"));
+        assert_eq!(trace.subgraph_node_count, 0);
+        assert_eq!(trace.omitted_node_count, 4);
+        assert_eq!(trace.max_hops, 0);
+    }
+
+    /// MCP-style input (anchor entities only, no edges) stays bounded and
+    /// keeps its anchors: pruning must not change its behavior.
+    #[test]
+    fn mcp_style_anchors_only_input_stays_bounded() {
+        let client = OpenCodeClient::mock();
+        let req = IngestRequest {
+            text: "Harry Potter and Hermione are friends.".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: Some("e1".to_string()),
+                    label: "Harry Potter".to_string(),
+                    kind: "person".to_string(),
+                },
+                GraphNode {
+                    id: Some("e2".to_string()),
+                    label: "Hermione".to_string(),
+                    kind: "person".to_string(),
+                },
+            ],
+            edges: vec![],
+        };
+        let (_, _, trace) = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(extract_delta_traced(&client, &req));
+
+        assert_eq!(trace.subgraph_node_count, 2);
+        assert_eq!(trace.subgraph_edge_count, 0);
+        assert_eq!(trace.omitted_node_count, 0);
+        assert!(trace.user_prompt.contains("Harry Potter"));
+        assert!(trace.user_prompt.contains("Hermione"));
+    }
+
+    /// A repeated note reuses existing labels/IDs: the delta never duplicates
+    /// an existing concept even though the prompt only carried a subgraph.
+    #[test]
+    fn repeated_note_reuses_existing_ids() {
+        let client = OpenCodeClient::mock();
+        let req = full_req("Harry's best friends are Ron and Hermione.");
+        let (delta, _, _) = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(extract_delta_traced(&client, &req));
+
+        // Existing labels are not re-emitted as new nodes; edges canonicalize
+        // to the existing "Harry Potter" spelling.
+        let labels: Vec<&str> = delta.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert!(!labels.contains(&"Harry Potter"));
+        assert!(!labels.contains(&"Ron"));
+        assert!(!labels.contains(&"Hermione"));
+        for e in &delta.edges {
+            assert_eq!(e.source_label, "Harry Potter");
+        }
     }
 }
