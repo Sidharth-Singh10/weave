@@ -117,6 +117,8 @@ pub struct IngestResult {
     pub claims_added: i64,
     pub claims_quarantined: i64,
     pub claims_rejected: i64,
+    /// High-risk claims reviewed by the V4 selective verifier.
+    pub claims_verified: i64,
     pub contradictions_detected: i64,
     /// Candidate anchors selected by hybrid retrieval, with explainable
     /// scores/reasons (why each entity was offered to the extractor).

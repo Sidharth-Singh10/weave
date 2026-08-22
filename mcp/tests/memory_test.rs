@@ -54,6 +54,7 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
         &["work".to_string()],
         "user",
         None,
+        true,
     )
     .await
     .expect("ingest");
@@ -114,6 +115,7 @@ async fn ingest_pipeline_persists_graph_with_provenance() {
         &[],
         "user",
         None,
+        true,
     )
     .await
     .expect("re-ingest");
@@ -329,6 +331,7 @@ async fn claims_evidence_contradiction_and_alias() {
         &[],
         "user",
         None,
+        true,
     )
     .await
     .expect("ingest asserted claim");
@@ -440,6 +443,7 @@ async fn claims_evidence_contradiction_and_alias() {
         &[],
         "user",
         None,
+        true,
     )
     .await
     .expect("ingest via alias");
@@ -471,6 +475,7 @@ async fn retrieval_reasons_and_reindex_v3() {
         &[],
         "user",
         None,
+        true,
     )
     .await
     .expect("ingest");
@@ -526,4 +531,55 @@ async fn retrieval_reasons_and_reindex_v3() {
     assert!(!result.semantic);
 
     store::delete_note(&pool, note.note_id).await.unwrap();
+}
+
+/// V4: with the LLM unavailable (mock), the selective verifier falls back to
+/// deterministic behavior — no claims are verified, and the risk policy still
+/// quarantines unsupported claims.
+#[tokio::test]
+async fn verifier_falls_back_without_llm_v4() {
+    let _guard = DB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: no reachable database");
+        return;
+    };
+    let llm = Arc::new(OpenCodeClient::mock());
+    let embedder = stub_embedder();
+
+    // Mock LLM has no API key -> verify_claim is never invoked.
+    let note = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "Rust improves compile times and reduces bugs.",
+        "note",
+        &[],
+        "user",
+        None,
+        true,
+    )
+    .await
+    .expect("ingest");
+    assert_eq!(
+        note.claims_verified, 0,
+        "verifier must be skipped when the LLM is unavailable"
+    );
+
+    // Unsupported claim is still quarantined deterministically.
+    let note2 = ingest::ingest_note(
+        &pool,
+        &llm,
+        &embedder,
+        "Something about the weather today.",
+        "note",
+        &[],
+        "user",
+        None,
+        true,
+    )
+    .await
+    .expect("ingest unsupported");
+
+    store::delete_note(&pool, note.note_id).await.unwrap();
+    store::delete_note(&pool, note2.note_id).await.unwrap();
 }

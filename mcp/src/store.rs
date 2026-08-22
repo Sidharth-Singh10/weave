@@ -153,6 +153,28 @@ pub async fn insert_entity(pool: &PgPool, label: &str, kind: &str) -> Result<Ent
     .await
 }
 
+/// Add an alias to an entity if not already present (non-destructive).
+pub async fn add_entity_alias(
+    pool: &PgPool,
+    id: Uuid,
+    alias: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE entities SET aliases = CASE
+            WHEN $2 = ANY(aliases) THEN aliases
+            ELSE array_append(aliases, $2)
+        END
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .bind(alias.trim())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Look up an entity by label (normalized) or create it.
 pub async fn get_or_create_entity(
     pool: &PgPool,

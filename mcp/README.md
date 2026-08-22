@@ -30,6 +30,12 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
   Unsupported claims are quarantined; contradicting claims (same triple,
   opposing modality) are linked and both marked `contradicted` — nothing is
   silently overwritten.
+- **Selective deep verification** — high-risk claims (ambiguous entity
+  resolution, contradiction with a high-confidence claim, uncertain or
+  comparative language, unsupported evidence) are reviewed by a narrow
+  structured verifier LLM call (accept/reject/quarantine, optional modality
+  correction, canonical-entity resolution). Normal notes pay nothing;
+  verifier decisions are recorded on the claim (`WEAVE_MCP_VERIFIER` toggles).
 - **Files** — documents, PDFs, images, audio are stored as blobs on disk with
   metadata; text is extracted for text-ish files and ingested.
 - **Retrieval (GraphRAG)** — hybrid: vector (pgvector) + full-text (Postgres

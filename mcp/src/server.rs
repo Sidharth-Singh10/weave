@@ -184,6 +184,7 @@ impl MemoryServer {
             &tags,
             "user",
             None,
+            self.config.verifier_enabled,
         )
         .await
         .map_err(|e| self.err(&e.to_string()))?;
@@ -239,6 +240,7 @@ impl MemoryServer {
                     &self.embedder,
                     document.id,
                     &text,
+                    self.config.verifier_enabled,
                 )
                 .await
                 .map_err(|e| self.err(&e.to_string()))?;

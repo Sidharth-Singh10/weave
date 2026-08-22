@@ -19,3 +19,4 @@ pub mod server;
 pub mod store;
 pub mod summary;
 pub mod validate;
+pub mod verify;
