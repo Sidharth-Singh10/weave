@@ -11,6 +11,7 @@ Weave is an AI-powered knowledge graph application. You type plain-language note
 - **Web semantic retrieval** — weave-api embeds the request graph on-the-fly (local ONNX): ingest grounding and `/api/graph/search` use hybrid lexical + embedding ranking with explainable similarity; a search box in the canvas header shows ranked results and jumps to nodes.
 - **Graph provenance** — every node/edge records the note that created it (persisted per session); the node inspector shows its originating note and time.
 - **Edge confidence** — every relationship is grounded against the note that produced it and tagged `EXTRACTED` (stated in the note), `INFERRED` (a deduction), or `AMBIGUOUS` (not supported by the note), with the supporting sentence. Inferred edges are drawn dashed, ambiguous ones amber, and the inspector lists each connection with its class and evidence.
+- **Export** — the graph can leave the browser: a schema-versioned JSON snapshot with provenance, an Obsidian vault (one linked note per concept), GraphML for Gephi/yEd/NetworkX, or Cypher `MERGE` statements for Neo4j. See [Export](#export).
 - **Admin pipeline tracer** — an admin-only `/admin/pipeline` page shows every ingest stage end-to-end, including the exact prompt sent to the LLM, the raw response, and the subgraph (lexical + semantic anchors) that was selected.
 - **Infinite canvas** — the graph grows with your knowledge (React Flow).
 - **Interactive editing** — drag, rename (double-click), delete, and connect nodes manually.
@@ -428,6 +429,27 @@ Every response carries `X-Request-ID`; every error uses the standardized
 `forbidden`, `rate_limit_exceeded`, `quota_exceeded`, `invalid_request`,
 `not_found`, `conflict`, `service_unavailable`, `internal_error`.
 
+## Export
+
+The knowledge graph lives in the browser's IndexedDB, so the canvas header's
+**Export** menu is the durable copy. It reads the active session and generates
+the file client-side — nothing is uploaded, and no server route exists.
+
+| Format | Extension | Use it for |
+|---|---|---|
+| JSON snapshot | `.json` | Backup and round-tripping. `schema: "weave.graph"`, `schema_version: 1`, counts, node/edge provenance inlined, positions, community labels. |
+| Obsidian vault | `.zip` | Reading and editing the graph as notes. `Weave.md` index plus `Nodes/<name>.md` with YAML frontmatter (`weave_id`, `kind`), `[[wikilinks]]` both ways, relation confidence, evidence quote, and the source note. |
+| GraphML | `.graphml` | Gephi, yEd, NetworkX, and other graph tools. Label/kind on nodes; relation, confidence, evidence on edges. |
+| Cypher | `.cypher` | Loading into Neo4j or Memgraph. `MERGE (n:Entity {id})` per concept, `MERGE (a)-[r:RELATED {relation}]->(b)` per relationship. |
+
+The JSON `schema_version` is independent of the in-browser `PersistedScene`
+version: an export outlives migrations. Bump it only for breaking changes.
+
+Export writers are pure functions in `frontend/src/lib/export.ts`
+(`exportJson`, `exportObsidian`, `exportGraphML`, `exportCypher`) with a
+dependency-free ZIP writer in `lib/zip.ts`. `npm test` runs them under Node's
+built-in test runner — no test framework dependency.
+
 ## Environment
 
 Backend variables are documented in `backend/.env.example`. Key ones:
@@ -449,6 +471,7 @@ Backend variables are documented in `backend/.env.example`. Key ones:
 ```bash
 npm run build    # frontend production build
 npm run lint     # frontend ESLint
+npm test         # frontend unit tests (node:test) — export writers + ZIP
 cd backend && cargo test          # backend unit + integration tests
 cd frontend && npx playwright test  # e2e (requires docker compose up -d)
 cargo test --workspace            # backend + weave-core + mcp tests
