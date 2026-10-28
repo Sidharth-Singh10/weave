@@ -125,6 +125,9 @@ pub struct IngestResult {
     pub retrieval: Vec<crate::retrieval::RetrievalCandidate>,
     /// Write receipt: ids of the claims this write committed.
     pub claim_ids: Vec<Uuid>,
+    /// Labels that looked like an existing entity when they were created.
+    /// Advisory only — the write still landed.
+    pub possible_duplicates: Vec<String>,
     /// True when the content already existed (idempotent write).
     pub duplicate: bool,
     pub total_entities: i64,

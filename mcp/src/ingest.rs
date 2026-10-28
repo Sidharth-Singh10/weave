@@ -71,6 +71,7 @@ pub async fn ingest_note(
             contradictions_detected: 0,
             retrieval: vec![],
             claim_ids,
+            possible_duplicates: vec![],
             duplicate: true,
             total_entities,
             total_relations,
@@ -153,6 +154,7 @@ pub async fn ingest_note(
                 created: false,
                 method: entity::ResolutionMethod::Exact,
                 ambiguous_candidates: vec![],
+                near_duplicates: vec![],
             },
         );
     }
@@ -166,6 +168,7 @@ pub async fn ingest_note(
     let mut claims_verified = 0i64;
     let mut contradictions_detected = 0i64;
     let mut verifier_calls = 0usize;
+    let mut possible_duplicates: Vec<String> = Vec::new();
 
     // Pass 1: validate every proposed node label; resolve valid ones.
     // Kinds come from the LLM nodes so edge endpoints reuse them.
@@ -189,6 +192,11 @@ pub async fn ingest_note(
         let r = entity::resolve(pool, &node.label, &node.kind).await?;
         if r.created {
             entities_added.push(node.label.clone());
+            for near in &r.near_duplicates {
+                if !possible_duplicates.contains(&near.label) {
+                    possible_duplicates.push(near.label.clone());
+                }
+            }
             crate::audit::record_new(
                 pool,
                 actor,
@@ -520,6 +528,7 @@ pub async fn ingest_note(
         contradictions_detected,
         retrieval,
         claim_ids,
+        possible_duplicates,
         duplicate: false,
         total_entities,
         total_relations,

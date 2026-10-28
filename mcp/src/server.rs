@@ -49,6 +49,31 @@ impl MemoryServer {
     fn err(&self, message: &str) -> McpError {
         McpError::internal_error(message.to_string(), None)
     }
+
+    /// A missing label never gets a guessed answer: offer the near matches and
+    /// let the caller choose.
+    fn not_found_with(&self, label: &str, candidates: &[crate::models::Entity]) -> String {
+        if candidates.is_empty() {
+            return format!("Entity \"{label}\" not found.");
+        }
+        let names: Vec<&str> = candidates.iter().map(|c| c.label.as_str()).collect();
+        format!(
+            "Entity \"{label}\" not found. Did you mean: {}?",
+            names.join(", ")
+        )
+    }
+
+    async fn not_found(&self, label: &str) -> String {
+        let candidates = store::similar_entities(
+            &self.pool,
+            &store::normalize_label(label),
+            None,
+            5,
+        )
+        .await
+        .unwrap_or_default();
+        self.not_found_with(label, &candidates)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +144,22 @@ pub struct GetRelatedArgs {
     pub label: String,
     #[schemars(description = "Hop depth to expand (1-3)")]
     pub depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ExplainArgs {
+    #[schemars(description = "Entity label to explain")]
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PathArgs {
+    #[schemars(description = "Starting entity label")]
+    pub from: String,
+    #[schemars(description = "Target entity label")]
+    pub to: String,
+    #[schemars(description = "Maximum hops to search (1-8, default 6)")]
+    pub max_depth: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -415,7 +456,7 @@ impl MemoryServer {
             .map_err(|e| self.err(&e.to_string()))?
         {
             Some(view) => Ok(self.result_json(&view)),
-            None => Ok(format!("Entity \"{label}\" not found.")),
+            None => Ok(self.not_found(label).await),
         }
     }
 
@@ -437,7 +478,60 @@ impl MemoryServer {
                 "nodes": sub.entities,
                 "edges": sub.edges,
             }))),
-            None => Ok(format!("Entity \"{label}\" not found.")),
+            None => Ok(self.not_found(label).await),
+        }
+    }
+
+    /// Explain one entity: its degree and every relation touching it, in both
+    /// directions.
+    #[tool(description = "Explain an entity: degree and every relation touching it")]
+    async fn explain_node(
+        &self,
+        Parameters(args): Parameters<ExplainArgs>,
+    ) -> Result<String, McpError> {
+        let label = args.label.trim();
+        if label.is_empty() {
+            return Err(McpError::invalid_params("label must not be empty", None));
+        }
+        match crate::graph::explain(&self.pool, label)
+            .await
+            .map_err(|e| self.err(&e.to_string()))?
+        {
+            crate::graph::ExplainOutcome::Found(explanation) => {
+                Ok(self.result_json(&explanation))
+            }
+            crate::graph::ExplainOutcome::NotFound { candidates } => {
+                Ok(self.not_found_with(label, &candidates))
+            }
+        }
+    }
+
+    /// Shortest path between two entities, hop by hop. Answers "how are these
+    /// two things connected?" over the stored relations.
+    #[tool(description = "Trace how two entities are connected (shortest path, hop by hop)")]
+    async fn path_between(
+        &self,
+        Parameters(args): Parameters<PathArgs>,
+    ) -> Result<String, McpError> {
+        let from = args.from.trim();
+        let to = args.to.trim();
+        if from.is_empty() || to.is_empty() {
+            return Err(McpError::invalid_params(
+                "from and to must not be empty",
+                None,
+            ));
+        }
+        match crate::graph::find_path(&self.pool, from, to, args.max_depth.unwrap_or(6))
+            .await
+            .map_err(|e| self.err(&e.to_string()))?
+        {
+            crate::graph::PathOutcome::Found(path) => Ok(self.result_json(&path)),
+            crate::graph::PathOutcome::NoPath => Ok(format!(
+                "No path found between \"{from}\" and \"{to}\" within the search depth."
+            )),
+            crate::graph::PathOutcome::Missing { label, candidates } => {
+                Ok(self.not_found_with(&label, &candidates))
+            }
         }
     }
 

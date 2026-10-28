@@ -37,6 +37,10 @@ pub struct ResolvedEntity {
     pub method: ResolutionMethod,
     /// Candidate ids when an alias matched more than one entity (abstain).
     pub ambiguous_candidates: Vec<Uuid>,
+    /// Near-duplicate labels that existed before this entity was created
+    /// ("Postgres" vs "PostgreSQL"). Advisory: the write still lands, but the
+    /// caller can surface it instead of silently splitting the graph.
+    pub near_duplicates: Vec<Entity>,
 }
 
 /// Resolve `label` to an entity: exact normalized match, then a unique alias
@@ -49,6 +53,7 @@ pub async fn resolve(pool: &PgPool, label: &str, kind: &str) -> Result<ResolvedE
             created: false,
             method: ResolutionMethod::Exact,
             ambiguous_candidates: vec![],
+            near_duplicates: vec![],
         });
     }
 
@@ -59,14 +64,19 @@ pub async fn resolve(pool: &PgPool, label: &str, kind: &str) -> Result<ResolvedE
             created: false,
             method: ResolutionMethod::Alias,
             ambiguous_candidates: vec![],
+            near_duplicates: vec![],
         }),
         _ => {
+            // Look before creating: a similar label means the caller may be
+            // about to fork an existing concept into two.
+            let near_duplicates = store::similar_entities(pool, &normalized, None, 3).await?;
             let entity = store::insert_entity(pool, label, kind).await?;
             Ok(ResolvedEntity {
                 entity,
                 created: true,
                 method: ResolutionMethod::Created,
                 ambiguous_candidates: alias_matches.iter().map(|e| e.id).collect(),
+                near_duplicates,
             })
         }
     }

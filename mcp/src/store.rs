@@ -530,6 +530,37 @@ pub async fn search_entities(
     .await
 }
 
+/// Entities whose label contains `normalized`, or is contained by it: the cheap
+/// "did you mean" signal for near-duplicates ("postgres" vs "postgresql",
+/// "Harry" vs "Harry Potter"). Returns nothing for very short needles, which
+/// would otherwise match a large share of the table.
+pub async fn similar_entities(
+    pool: &PgPool,
+    normalized: &str,
+    exclude: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<Entity>, sqlx::Error> {
+    if normalized.chars().count() < 3 {
+        return Ok(vec![]);
+    }
+    sqlx::query_as::<_, Entity>(
+        r#"
+        SELECT id, label, normalized_label, kind, aliases, description, created_at
+        FROM entities
+        WHERE ($2::uuid IS NULL OR id <> $2)
+          AND length(normalized_label) >= 3
+          AND (strpos(normalized_label, $1) > 0 OR strpos($1, normalized_label) > 0)
+        ORDER BY length(label) ASC, label ASC
+        LIMIT $3
+        "#,
+    )
+    .bind(normalized)
+    .bind(exclude)
+    .bind(limit.clamp(1, 10))
+    .fetch_all(pool)
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Graph traversal
 // ---------------------------------------------------------------------------
