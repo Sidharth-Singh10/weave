@@ -10,6 +10,7 @@ import { TOPIC_COLORS } from "@/lib/graph-projection";
 import type { ViewType } from "@/lib/graph-types";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { SessionSwitcher } from "./SessionSwitcher";
+import { ExportMenu } from "./ExportMenu";
 import { CommonGroundBadge } from "./CommonGroundBadge";
 
 const VIEW_LABELS: Record<ViewType, string> = {
@@ -117,6 +118,7 @@ export function CanvasHeader() {
 
       <div className="pointer-events-auto flex items-center gap-2">
         <SessionSwitcher />
+        <ExportMenu />
         <div className="flex items-center gap-0.5 rounded-lg border border-line bg-background/80 p-0.5">
           {VIEW_ORDER.map((v) => (
             <button
