@@ -4,6 +4,7 @@
 //! Used by both `weave-api` (the web backend) and `weave-mcp` (the knowledge /
 //! memory MCP server), so the two stay on one extraction implementation.
 
+pub mod analyze;
 pub mod embed;
 pub mod extract;
 pub mod llm;
