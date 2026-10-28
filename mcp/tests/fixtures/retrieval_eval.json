@@ -1,0 +1,65 @@
+{
+  "description": "Ranking baseline for weave-mcp hybrid retrieval. Each case lists the candidates a query would produce, with the features the shared scorer sees. Relevance is graded 0 (irrelevant) to 3 (the answer). Cases are hand-written from known failure modes: generic hubs outranking specific content, semantic-only matches, and weak graph-expansion neighbors. Add a case whenever a retrieval bug is found — the corpus is how this stays fixed.",
+  "k": 3,
+  "thresholds": {
+    "recall_at_k": 0.8,
+    "mrr_at_k": 0.88,
+    "min_case_recall": 0.5
+  },
+  "cases": [
+    {
+      "query": "What language does PerOxO use?",
+      "candidates": [
+        { "label": "Rust", "degree": 2, "mentioned": true, "relevance": 3 },
+        { "label": "ScyllaDB", "degree": 2, "mentioned": true, "relevance": 2 },
+        { "label": "PerOxO", "degree": 3, "keyword": true, "relevance": 1 },
+        { "label": "Programming", "degree": 40, "keyword": true, "relevance": 0 }
+      ]
+    },
+    {
+      "query": "Postgres replication settings",
+      "candidates": [
+        { "label": "Postgres", "degree": 5, "mentioned": true, "relevance": 3 },
+        { "label": "Database", "degree": 400, "mentioned": true, "relevance": 0 },
+        { "label": "Settings", "degree": 3, "keyword": true, "relevance": 1 },
+        { "label": "Replication", "degree": 8, "keyword": true, "relevance": 2 }
+      ]
+    },
+    {
+      "query": "how do I make the tests run faster",
+      "candidates": [
+        { "label": "Caching", "degree": 4, "similarity": 0.88, "relevance": 3 },
+        { "label": "Indexes", "degree": 7, "similarity": 0.7, "relevance": 1 },
+        { "label": "Performance", "degree": 30, "similarity": 0.55, "relevance": 2 },
+        { "label": "Unrelated", "degree": 2, "similarity": 0.12, "relevance": 0 }
+      ]
+    },
+    {
+      "query": "Hogwarts houses",
+      "candidates": [
+        { "label": "Hogwarts", "degree": 6, "mentioned": true, "relevance": 3 },
+        { "label": "Hufflepuff", "degree": 2, "neighbor": true, "relevance": 1 },
+        { "label": "Gryffindor", "degree": 3, "neighbor": true, "relevance": 2 },
+        { "label": "Quidditch", "degree": 4, "neighbor": true, "relevance": 0 }
+      ]
+    },
+    {
+      "query": "vector search with pgvector",
+      "candidates": [
+        { "label": "pgvector", "degree": 3, "mentioned": true, "similarity": 0.95, "relevance": 3 },
+        { "label": "Elasticsearch", "degree": 12, "keyword": true, "relevance": 0 },
+        { "label": "Postgres", "degree": 20, "keyword": true, "similarity": 0.6, "relevance": 2 },
+        { "label": "Embeddings", "degree": 5, "similarity": 0.8, "relevance": 1 }
+      ]
+    },
+    {
+      "query": "deployment notes",
+      "candidates": [
+        { "label": "Notes", "degree": 50, "mentioned": true, "relevance": 0 },
+        { "label": "Deployment", "degree": 200, "mentioned": true, "relevance": 1 },
+        { "label": "Helm", "degree": 5, "neighbor": true, "relevance": 1 },
+        { "label": "Kubernetes", "degree": 6, "neighbor": true, "relevance": 2 }
+      ]
+    }
+  ]
+}

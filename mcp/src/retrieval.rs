@@ -37,6 +37,73 @@ fn hub_penalty(degree: usize) -> f64 {
     penalty.min(0.2)
 }
 
+/// The features that decide one candidate's score.
+///
+/// Kept separate from the candidate union so the ranking can be evaluated and
+/// changed deliberately — see `tests/retrieval_eval.rs`, which measures
+/// recall@k and MRR over a fixed corpus and fails when a weight change makes
+/// retrieval worse.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Signals {
+    /// The entity's label or an alias appears verbatim in the query.
+    pub mentioned: bool,
+    /// The entity matched by keyword, but was not mentioned.
+    pub keyword: bool,
+    /// Reached as a 1-hop neighbor of a top anchor.
+    pub neighbor: bool,
+    /// Cosine similarity, when the semantic layer is active.
+    pub similarity: Option<f32>,
+    /// Incident relation count, used for the hub penalty.
+    pub degree: usize,
+}
+
+/// The documented ranking formula, in one place.
+///
+/// Lexical layers are mutually exclusive in priority order
+/// (mention > keyword > neighbor). A semantic score blends over whatever base
+/// exists.
+///
+/// Note: the hub penalty is applied twice on blended candidates (once inside
+/// the lexical base, once when blending) and once on semantic-only candidates.
+/// That asymmetry is preserved on purpose: this function is the baseline the
+/// evaluation corpus was measured against, and changing it should show up as a
+/// metric change rather than slip in silently.
+pub fn score(signals: &Signals) -> f64 {
+    let base = if signals.mentioned {
+        0.9
+    } else if signals.keyword {
+        0.6
+    } else if signals.neighbor {
+        0.4
+    } else {
+        0.0
+    };
+    let penalty = hub_penalty(signals.degree);
+
+    match signals.similarity {
+        Some(similarity) => {
+            if base == 0.0 {
+                0.4 * similarity as f64 - penalty
+            } else {
+                0.6 * (base - penalty) + 0.4 * similarity as f64 - penalty
+            }
+        }
+        None => base - penalty,
+    }
+}
+
+/// Read the signals back off a candidate's recorded reasons, so a semantic
+/// merge can score it exactly as its first insertion would have.
+fn signals_from(candidate: &RetrievalCandidate, degree: usize, similarity: f32) -> Signals {
+    Signals {
+        mentioned: candidate.reasons.iter().any(|r| r == "mention"),
+        keyword: candidate.reasons.iter().any(|r| r == "keyword"),
+        neighbor: candidate.reasons.iter().any(|r| r.starts_with("1-hop of ")),
+        similarity: Some(similarity),
+        degree,
+    }
+}
+
 /// Retrieve the entities most relevant to `query` (a note during ingest, a
 /// user query during recall). Candidate union: lexical mention/keyword,
 /// semantic similarity, and 1-hop graph neighbors of the top anchors.
@@ -59,7 +126,11 @@ pub async fn retrieve_entities(
             entity.id,
             RetrievalCandidate {
                 entity,
-                score: 0.9 - hub_penalty(degree),
+                score: score(&Signals {
+                    mentioned: true,
+                    degree,
+                    ..Signals::default()
+                }),
                 similarity: 0.0,
                 reasons: vec!["mention".to_string()],
             },
@@ -79,7 +150,11 @@ pub async fn retrieve_entities(
             })
             .or_insert(RetrievalCandidate {
                 entity,
-                score: 0.6 - hub_penalty(degree),
+                score: score(&Signals {
+                    keyword: true,
+                    degree,
+                    ..Signals::default()
+                }),
                 similarity: 0.0,
                 reasons: vec!["keyword".to_string()],
             });
@@ -91,17 +166,21 @@ pub async fn retrieve_entities(
         let semantic = store::vector_search_entities_scored(pool, &query_vec, top_k as i64).await?;
         for (entity, similarity) in semantic {
             let degree = store::relations_for_entity(pool, entity.id).await?.len();
-            let score = 0.4 * similarity as f64 - hub_penalty(degree);
+            let semantic_only = score(&Signals {
+                similarity: Some(similarity),
+                degree,
+                ..Signals::default()
+            });
             by_id
                 .entry(entity.id)
                 .and_modify(|c| {
                     c.similarity = similarity;
-                    c.score = 0.6 * c.score + 0.4 * similarity as f64 - hub_penalty(degree);
+                    c.score = score(&signals_from(c, degree, similarity));
                     c.reasons.push("semantic".to_string());
                 })
                 .or_insert(RetrievalCandidate {
                     entity,
-                    score,
+                    score: semantic_only,
                     similarity,
                     reasons: vec!["semantic".to_string()],
                 });
@@ -131,7 +210,11 @@ pub async fn retrieve_entities(
                 neighbor_id,
                 RetrievalCandidate {
                     entity,
-                    score: 0.4 - hub_penalty(degree),
+                    score: score(&Signals {
+                        neighbor: true,
+                        degree,
+                        ..Signals::default()
+                    }),
                     similarity: 0.0,
                     reasons: vec![format!("1-hop of {anchor_id}")],
                 },
@@ -237,6 +320,104 @@ mod tests {
         // Monotonic increasing in degree, capped at 0.2.
         assert!(hub_penalty(100) > hub_penalty(10));
         assert!(hub_penalty(10_000) <= 0.2);
+    }
+
+    /// The scorer must reproduce the historical weights exactly: the eval
+    /// corpus baseline was measured against these numbers.
+    #[test]
+    fn score_keeps_documented_weights() {
+        let degree = 0;
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+
+        assert!(close(
+            score(&Signals {
+                mentioned: true,
+                degree,
+                ..Signals::default()
+            }),
+            0.9
+        ));
+        assert!(close(
+            score(&Signals {
+                keyword: true,
+                degree,
+                ..Signals::default()
+            }),
+            0.6
+        ));
+        assert!(close(
+            score(&Signals {
+                neighbor: true,
+                degree,
+                ..Signals::default()
+            }),
+            0.4
+        ));
+        // Semantic-only: 0.4·similarity − penalty.
+        assert!(close(
+            score(&Signals {
+                similarity: Some(1.0),
+                degree,
+                ..Signals::default()
+            }),
+            0.4
+        ));
+        // Mention blended with semantic: 0.6·0.9 + 0.4·1.0.
+        assert!(close(
+            score(&Signals {
+                mentioned: true,
+                similarity: Some(1.0),
+                degree,
+                ..Signals::default()
+            }),
+            0.94
+        ));
+    }
+
+    /// Lexical layers outrank each other at equal degree, regardless of order.
+    #[test]
+    fn lexical_priority_is_mention_keyword_neighbor() {
+        let degree = 5;
+        let mention = score(&Signals {
+            mentioned: true,
+            degree,
+            ..Signals::default()
+        });
+        let keyword = score(&Signals {
+            keyword: true,
+            degree,
+            ..Signals::default()
+        });
+        let neighbor = score(&Signals {
+            neighbor: true,
+            degree,
+            ..Signals::default()
+        });
+        assert!(mention > keyword && keyword > neighbor);
+    }
+
+    /// Connection count suppresses hubs without inverting lexical priority.
+    #[test]
+    fn hub_penalty_suppresses_without_inverting() {
+        let hub = score(&Signals {
+            mentioned: true,
+            degree: 1_000,
+            ..Signals::default()
+        });
+        let leaf = score(&Signals {
+            mentioned: true,
+            degree: 1,
+            ..Signals::default()
+        });
+        assert!(hub < leaf);
+
+        // A huge hub still beats a weak neighbor: the penalty is bounded.
+        let weak_neighbor = score(&Signals {
+            neighbor: true,
+            degree: 1,
+            ..Signals::default()
+        });
+        assert!(hub > weak_neighbor);
     }
 
     #[test]
