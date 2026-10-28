@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use regex::Regex;
 
 use crate::llm::{OpenCodeClient, TokenUsage};
-use crate::models::{GraphDelta, GraphEdge, GraphNode, IngestRequest};
+use crate::models::{confidence, GraphDelta, GraphEdge, GraphNode, IngestRequest};
 
 /// Stable, human-readable node IDs: `node-{slug}`, with a numeric suffix on collision.
 fn slug(label: &str) -> String {
@@ -117,6 +117,7 @@ mod id_tests {
                 source_label: "Harry Potter".to_string(),
                 target_label: "Hogwarts".to_string(),
                 relation: "studies at".to_string(),
+                ..GraphEdge::default()
             }],
         };
         assign_ids(&mut delta, &existing);
@@ -140,7 +141,8 @@ Rules:
 
 /// Extraction behavior version, recorded in traces so memory written under one
 /// prompt/schema version stays auditable after the extractor changes.
-pub const EXTRACTOR_VERSION: &str = "1";
+/// v2: edges are grounded against the note (confidence + evidence).
+pub const EXTRACTOR_VERSION: &str = "2";
 
 /// Everything the pipeline tracer needs to show how one ingest reached the
 /// LLM and what came back.
@@ -277,6 +279,11 @@ async fn extract_with_llm(
     let mut delta: GraphDelta = serde_json::from_value(out.json.clone())?;
     dedup_against_existing(&mut delta, &req.nodes.iter().map(|n| n.label.clone()).collect::<Vec<_>>());
     assign_ids(&mut delta, &req.nodes);
+    // Ground every edge in the note itself: the model supplies relations, we
+    // decide (deterministically) how well the note supports them.
+    for edge in &mut delta.edges {
+        classify_edge(edge, &req.text);
+    }
     let trace = ExtractTrace {
         system_prompt: SYSTEM_PROMPT.to_string(),
         user_prompt: user,
@@ -308,6 +315,123 @@ fn labels_match(a: &str, b: &str) -> bool {
     let (a, b) = (a.to_lowercase(), b.to_lowercase());
     a.starts_with(&format!("{b} ")) || b.starts_with(&format!("{a} "))
 }
+
+// ---------------------------------------------------------------------------
+// Edge confidence
+//
+// The model is asked for relations, not for calibrated confidence, so we never
+// trust a self-reported score. Instead each edge is grounded against the note
+// that produced it: is the relation wording there, and are both endpoints
+// actually named? That yields a deterministic, reproducible class and a
+// supporting sentence, at zero extra tokens.
+// ---------------------------------------------------------------------------
+
+/// Relations that assert no specific fact — always a structural guess.
+const GENERIC_RELATIONS: &[&str] = &["related to", "associated with", "connected to"];
+
+/// Words that carry no grounding signal on their own.
+const RELATION_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "is", "of", "on", "the",
+    "to", "with",
+];
+
+fn significant_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .filter(|t| !RELATION_STOPWORDS.contains(&t.as_str()))
+        .collect()
+}
+
+/// True when any meaningful word of `label` appears in the lowered note.
+/// Prefix matching keeps "Harry" and "Harry Potter" equivalent.
+fn label_mentioned(label: &str, note_lower: &str) -> bool {
+    significant_tokens(label)
+        .iter()
+        .any(|t| note_lower.contains(t.as_str()))
+}
+
+/// The sentence of `note_lower` containing `needle`, trimmed to a reviewable
+/// length. Notes can be a single line, so fall back to the whole text.
+fn evidence_sentence(note: &str, needle: &str) -> Option<String> {
+    let needle = needle.to_lowercase();
+    let mut sentences: Vec<&str> = vec![];
+    let mut start = 0usize;
+    for (i, c) in note.char_indices() {
+        if matches!(c, '.' | '!' | '?' | '\n') {
+            let piece = note[start..i].trim();
+            if !piece.is_empty() {
+                sentences.push(piece);
+            }
+            start = i + c.len_utf8();
+        }
+    }
+    let tail = note[start..].trim();
+    if !tail.is_empty() {
+        sentences.push(tail);
+    }
+
+    let hit = sentences
+        .iter()
+        .find(|s| s.to_lowercase().contains(&needle))
+        .or_else(|| sentences.first())?;
+
+    let mut out = hit.to_string();
+    if out.chars().count() > 280 {
+        out = out.chars().take(279).collect::<String>() + "…";
+    }
+    Some(out)
+}
+
+/// Ground one edge against its source note and store the class + evidence.
+fn classify_edge(edge: &mut GraphEdge, note: &str) {
+    let note_lower = note.to_lowercase();
+    let relation_lower = edge.relation.to_lowercase();
+
+    let source_present = label_mentioned(&edge.source_label, &note_lower);
+    let target_present = label_mentioned(&edge.target_label, &note_lower);
+
+    let tokens = significant_tokens(&edge.relation);
+    let matched: Vec<&String> = tokens
+        .iter()
+        .filter(|t| note_lower.contains(t.as_str()))
+        .collect();
+    let generic = GENERIC_RELATIONS
+        .iter()
+        .any(|g| relation_lower.contains(g));
+
+    let kind = if !source_present || !target_present {
+        // An endpoint the note never names came from graph context, not from
+        // what the user wrote: flag it for review.
+        confidence::AMBIGUOUS
+    } else if generic {
+        confidence::INFERRED
+    } else if tokens.is_empty() {
+        // Relation is pure function words ("is a"): accept only if literal.
+        if note_lower.contains(&relation_lower) {
+            confidence::EXTRACTED
+        } else {
+            confidence::INFERRED
+        }
+    } else if matched.len() == tokens.len() {
+        confidence::EXTRACTED
+    } else {
+        confidence::INFERRED
+    };
+
+    let evidence = matched
+        .first()
+        .and_then(|t| evidence_sentence(note, t))
+        .or_else(|| {
+            significant_tokens(&edge.source_label)
+                .first()
+                .and_then(|t| evidence_sentence(note, t))
+        });
+
+    edge.confidence = kind.to_string();
+    edge.evidence = evidence;
+}
+
 
 /// Drop nodes that already exist (case-insensitive) and rewrite edge
 /// endpoints to the canonical existing label where possible.
@@ -453,6 +577,7 @@ fn extract_mock(req: &IngestRequest) -> GraphDelta {
                 source_label: subject.clone(),
                 target_label: target.clone(),
                 relation: relation.clone(),
+                ..GraphEdge::default()
             });
         }
     }
@@ -465,11 +590,15 @@ fn extract_mock(req: &IngestRequest) -> GraphDelta {
             source_label: subject.clone(),
             target_label: o.clone(),
             relation: relation.clone(),
+            ..GraphEdge::default()
         });
     }
 
     dedup_against_existing(&mut delta, &existing);
     assign_ids(&mut delta, &req.nodes);
+    for edge in &mut delta.edges {
+        classify_edge(edge, &text);
+    }
     delta
 }
 
@@ -600,6 +729,72 @@ mod tests {
         assert_eq!(clean_object("three 4th year students"), "4th year students");
     }
 
+    // -- edge confidence grounding -----------------------------------------
+
+    fn edge(src: &str, tgt: &str, rel: &str) -> GraphEdge {
+        GraphEdge {
+            source_label: src.to_string(),
+            target_label: tgt.to_string(),
+            relation: rel.to_string(),
+            ..GraphEdge::default()
+        }
+    }
+
+    #[test]
+    fn stated_relation_is_extracted_with_evidence() {
+        let mut e = edge("Harry Potter", "Hogwarts", "studies at");
+        classify_edge(&mut e, "Harry studies at Hogwarts. He is a wizard.");
+        assert_eq!(e.confidence, confidence::EXTRACTED);
+        assert_eq!(e.evidence.as_deref(), Some("Harry studies at Hogwarts"));
+    }
+
+    #[test]
+    fn unstated_relation_between_named_entities_is_inferred() {
+        let mut e = edge("Harry Potter", "Hogwarts", "classmate of");
+        classify_edge(&mut e, "Harry studies at Hogwarts.");
+        assert_eq!(e.confidence, confidence::INFERRED);
+    }
+
+    #[test]
+    fn unnamed_endpoint_is_ambiguous() {
+        let mut e = edge("Draco Malfoy", "Slytherin", "rival of");
+        classify_edge(&mut e, "Harry studies at Hogwarts.");
+        assert_eq!(e.confidence, confidence::AMBIGUOUS);
+    }
+
+    #[test]
+    fn generic_relation_is_always_inferred() {
+        let mut e = edge("Harry Potter", "Hogwarts", "related to");
+        classify_edge(&mut e, "Harry studies at Hogwarts.");
+        assert_eq!(e.confidence, confidence::INFERRED);
+    }
+
+    #[test]
+    fn relation_wording_is_matched_across_word_forms() {
+        let mut e = edge("Harry Potter", "Ron", "friend of");
+        classify_edge(&mut e, "Harry's best friends are Ron and Hermione.");
+        assert_eq!(e.confidence, confidence::EXTRACTED);
+    }
+
+    #[test]
+    fn mock_fallback_relation_is_inferred() {
+        let delta = extract_mock(&req("Potter explained the thing.", &[]));
+        assert!(
+            delta.edges.iter().all(|e| e.confidence == confidence::INFERRED),
+            "a generic fallback relation must not claim EXTRACTED"
+        );
+    }
+
+    #[test]
+    fn mock_stated_relation_is_extracted() {
+        let delta = extract_mock(&req("Hogwarts has four houses.", &["Hogwarts"]));
+        assert_eq!(delta.edges[0].confidence, confidence::EXTRACTED);
+        assert_eq!(
+            delta.edges[0].evidence.as_deref(),
+            Some("Hogwarts has four houses")
+        );
+    }
+
     // -- subgraph-bounded prompt (V1) --------------------------------------
 
     fn full_req(text: &str) -> IngestRequest {
@@ -635,6 +830,7 @@ mod tests {
                     source_label: "Harry Potter".to_string(),
                     target_label: "Ron".to_string(),
                     relation: "friend of".to_string(),
+                    ..GraphEdge::default()
                 },
                 GraphEdge {
                     id: None,
@@ -643,6 +839,7 @@ mod tests {
                     source_label: "Ron".to_string(),
                     target_label: "Hermione".to_string(),
                     relation: "friend of".to_string(),
+                    ..GraphEdge::default()
                 },
             ],
         }

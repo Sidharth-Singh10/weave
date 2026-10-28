@@ -1,5 +1,23 @@
 use serde::{Deserialize, Serialize};
 
+/// How an edge's relationship is grounded in the note that produced it.
+///
+/// Mirrors the three-class vocabulary used by deterministic graph builders:
+/// - `EXTRACTED` — the relation is stated in the source note.
+/// - `INFERRED` — the relation is a reasonable deduction (generic relation,
+///   only part of the wording present, or resolved through graph context).
+/// - `AMBIGUOUS` — neither endpoint nor relation wording appears in the note,
+///   so the connection is a model guess that a human should review.
+pub mod confidence {
+    pub const EXTRACTED: &str = "EXTRACTED";
+    pub const INFERRED: &str = "INFERRED";
+    pub const AMBIGUOUS: &str = "AMBIGUOUS";
+}
+
+fn default_confidence() -> String {
+    confidence::EXTRACTED.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
     #[serde(default)]
@@ -20,6 +38,28 @@ pub struct GraphEdge {
     pub source_label: String,
     pub target_label: String,
     pub relation: String,
+    /// `EXTRACTED` / `INFERRED` / `AMBIGUOUS` — see [`confidence`].
+    #[serde(default = "default_confidence")]
+    pub confidence: String,
+    /// The sentence from the source note that supports this edge, when one
+    /// could be located deterministically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+}
+
+impl Default for GraphEdge {
+    fn default() -> Self {
+        Self {
+            id: None,
+            source_id: None,
+            target_id: None,
+            source_label: String::new(),
+            target_label: String::new(),
+            relation: String::new(),
+            confidence: default_confidence(),
+            evidence: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
