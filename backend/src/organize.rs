@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use weave_core::analyze::{self, Analysis};
 use weave_core::llm::{OpenCodeClient, TokenUsage};
@@ -35,18 +35,92 @@ Suggest ONE short group label (1-3 words, title case) that best captures what th
 Respond with strict JSON only: {"label":"..."}
 "#;
 
-fn graph_description(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
-    let node_str = nodes
+/// Bounded graph digest for the search prompt.
+///
+/// The whole graph used to be serialized here, so prompt cost grew with the
+/// canvas. Search is already seeded by semantic hints, so the model only needs
+/// the labels around those hints — plus the most connected concepts as a
+/// fallback when there are none.
+fn search_digest(
+    nodes: &[GraphNode],
+    edges: &[GraphEdge],
+    hints: &[serde_json::Value],
+) -> String {
+    const MAX_LABELS: usize = 120;
+    const MAX_EDGES: usize = 150;
+
+    let kind_of: HashMap<&str, &str> = nodes
         .iter()
-        .map(|n| format!("{} ({})", n.label, if n.kind.is_empty() { "concept" } else { &n.kind }))
+        .map(|n| (n.label.as_str(), n.kind.as_str()))
+        .collect();
+    let canonical: HashMap<String, &str> = nodes
+        .iter()
+        .map(|n| (n.label.to_lowercase(), n.label.as_str()))
+        .collect();
+
+    // Hints arrive from the embedder and may not match an existing label.
+    let hint_labels: Vec<String> = hints
+        .iter()
+        .filter_map(|h| h["label"].as_str())
+        .filter_map(|label| canonical.get(&label.to_lowercase()).map(|s| s.to_string()))
+        .collect();
+
+    let labels: Vec<String> = if hint_labels.is_empty() {
+        let degree = analyze::degree_map(nodes, edges);
+        let mut ranked: Vec<(String, usize)> = nodes
+            .iter()
+            .map(|n| (n.label.clone(), degree.get(&n.label).copied().unwrap_or(0)))
+            .collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        ranked
+            .into_iter()
+            .take(MAX_LABELS)
+            .map(|(label, _)| label)
+            .collect()
+    } else {
+        let all: Vec<String> = nodes.iter().map(|n| n.label.clone()).collect();
+        analyze::neighbourhood(&all, edges, &hint_labels, 1)
+            .into_iter()
+            .take(MAX_LABELS)
+            .collect()
+    };
+
+    let shown: HashSet<&str> = labels.iter().map(|s| s.as_str()).collect();
+    let visible_edges: Vec<&GraphEdge> = edges
+        .iter()
+        .filter(|e| {
+            shown.contains(e.source_label.as_str()) && shown.contains(e.target_label.as_str())
+        })
+        .collect();
+
+    let node_str = labels
+        .iter()
+        .map(|label| {
+            let kind = kind_of.get(label.as_str()).copied().unwrap_or("");
+            if kind.is_empty() {
+                format!("{label} (concept)")
+            } else {
+                format!("{label} ({kind})")
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
-    let edge_str = edges
+    let edge_str = visible_edges
         .iter()
+        .take(MAX_EDGES)
         .map(|e| format!("{} -[{}]-> {}", e.source_label, e.relation, e.target_label))
         .collect::<Vec<_>>()
         .join("; ");
-    format!("Nodes: [{}]\nEdges: [{}]", node_str, edge_str)
+
+    format!(
+        "Nodes ({} of {}): [{}]\nEdges ({} of {}): [{}]",
+        labels.len(),
+        nodes.len(),
+        node_str,
+        visible_edges.len().min(MAX_EDGES),
+        edges.len(),
+        edge_str
+    )
 }
 
 pub async fn organize(client: &OpenCodeClient, req: &OrganizeRequest) -> (OrganizeResult, Option<TokenUsage>) {
@@ -244,7 +318,7 @@ pub async fn search(
 
     let user = format!(
         "Graph:\n{}\n\nQuestion: {}\n\nSemantic hints (likely relevant labels): {}",
-        graph_description(&req.nodes, &req.edges),
+        search_digest(&req.nodes, &req.edges, semantic_hints),
         req.query,
         hint_str
     );
@@ -522,6 +596,54 @@ mod tests {
         assert!(
             digest.contains("RELATIONSHIPS (60 of 200)"),
             "digest must cap the relationship sample: {digest}"
+        );
+    }
+
+    // -- bounded search prompt -----------------------------------------------
+
+    fn concept_graph(n: usize) -> (Vec<GraphNode>, Vec<GraphEdge>) {
+        let nodes: Vec<GraphNode> = (0..n).map(|i| node(&format!("Concept {i}"))).collect();
+        let edges: Vec<GraphEdge> = (0..n)
+            .map(|i| {
+                edge(
+                    &format!("Concept {i}"),
+                    &format!("Concept {}", (i + 1) % n),
+                    "relates to",
+                )
+            })
+            .collect();
+        (nodes, edges)
+    }
+
+    /// Hints scope the digest to their neighborhood instead of the whole graph.
+    #[test]
+    fn search_digest_follows_hints() {
+        let (nodes, edges) = concept_graph(300);
+        let hints = vec![serde_json::json!({ "label": "Concept 42" })];
+
+        let digest = search_digest(&nodes, &edges, &hints);
+
+        assert!(
+            digest.contains("Nodes (3 of 300)"),
+            "only the hint plus its two neighbors should be shown: {digest}"
+        );
+        assert!(
+            !digest.contains("Concept 200"),
+            "unrelated labels must not be sent to the model"
+        );
+    }
+
+    /// Without hints, the digest falls back to the most connected labels and
+    /// still respects the cap.
+    #[test]
+    fn search_digest_without_hints_is_capped() {
+        let (nodes, edges) = concept_graph(300);
+
+        let digest = search_digest(&nodes, &edges, &[]);
+
+        assert!(
+            digest.starts_with("Nodes (120 of 300)"),
+            "fallback must cap labels: {digest}"
         );
     }
 }
