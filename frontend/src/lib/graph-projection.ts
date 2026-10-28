@@ -317,20 +317,35 @@ export function projectToRender(
     const a = view.communities[e.source];
     const b = view.communities[e.target];
     const inCommunity = a !== undefined && a === b;
-    const style = inCommunity
-      ? {
-          stroke: communityColor(a as number),
-          strokeOpacity: 0.5,
-          strokeWidth: 1.5,
-        }
-      : undefined;
+    const confidence = e.confidence ?? "EXTRACTED";
+
+    // Confidence is a visual affordance, not decoration: inferred edges are
+    // dashed, and ambiguous ones are flagged amber so a human can review them.
+    const style = {
+      ...(inCommunity
+        ? { stroke: communityColor(a as number), strokeOpacity: 0.5, strokeWidth: 1.5 }
+        : {}),
+      ...(confidence === "INFERRED"
+        ? { strokeDasharray: "5 4", strokeOpacity: 0.4 }
+        : {}),
+      ...(confidence === "AMBIGUOUS"
+        ? {
+            stroke: "#f59e0b",
+            strokeDasharray: "2 4",
+            strokeOpacity: 0.85,
+            strokeWidth: 1.5,
+          }
+        : {}),
+    };
+
     return {
       id: e.id,
       source: e.source,
       target: e.target,
       label: e.relation,
       type: "default",
-      style,
+      style: Object.keys(style).length > 0 ? style : undefined,
+      data: { confidence },
     };
   });
 

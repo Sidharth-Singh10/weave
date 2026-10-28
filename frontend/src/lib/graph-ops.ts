@@ -138,6 +138,8 @@ export function applyGraphDelta(
         source: srcId,
         target: tgtId,
         relation: e.relation,
+        confidence: e.confidence,
+        evidence: e.evidence,
       });
       newEdgeIds.push(edgeId);
       parentChildCount.set(srcId, (parentChildCount.get(srcId) ?? 0) + 1);

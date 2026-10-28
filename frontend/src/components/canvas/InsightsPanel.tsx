@@ -24,7 +24,7 @@ export function InsightsPanel() {
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
           <Sparkle size={14} className="text-accent" />
-          AI Suggestions
+          Suggestions
         </span>
         <button
           onClick={clearInsights}

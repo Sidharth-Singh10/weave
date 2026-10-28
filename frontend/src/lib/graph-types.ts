@@ -6,6 +6,10 @@ export interface ApiNode {
   kind: string;
 }
 
+/** How well an edge is grounded in the note that produced it.
+ * Mirrors `weave_core::models::confidence`. */
+export type EdgeConfidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
+
 export interface ApiEdge {
   id?: string;
   source_id?: string;
@@ -13,6 +17,8 @@ export interface ApiEdge {
   source_label: string;
   target_label: string;
   relation: string;
+  confidence?: EdgeConfidence;
+  evidence?: string;
 }
 
 export interface GraphDelta {
@@ -55,6 +61,10 @@ export interface KnowledgeEdge {
   source: string;
   target: string;
   relation: string;
+  /** Grounding class. Absent on edges persisted before confidence existed. */
+  confidence?: EdgeConfidence;
+  /** Sentence from the source note that supports the edge. */
+  evidence?: string;
 }
 
 export interface XYPosition {
