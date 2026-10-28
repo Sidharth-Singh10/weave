@@ -142,7 +142,7 @@ Rules:
 /// Extraction behavior version, recorded in traces so memory written under one
 /// prompt/schema version stays auditable after the extractor changes.
 /// v2: edges are grounded against the note (confidence + evidence).
-pub const EXTRACTOR_VERSION: &str = "2";
+pub const EXTRACTOR_VERSION: &str = "3";
 
 /// Everything the pipeline tracer needs to show how one ingest reached the
 /// LLM and what came back.
@@ -154,6 +154,13 @@ pub struct ExtractTrace {
     pub user_prompt: String,
     /// True when the deterministic mock extractor was used instead of the LLM.
     pub mock_fallback: bool,
+    /// How the delta was produced: `structured` (parsed from an explicit
+    /// Markdown/JSON note, no model call), `llm`, or `mock`.
+    pub extraction_path: String,
+    /// The structured format that was parsed, when `extraction_path` is
+    /// `structured`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_format: Option<String>,
     /// The full request body posted to `/chat/completions` (when LLM used).
     pub llm_request: Option<serde_json::Value>,
     /// The raw provider response text (when LLM used).
@@ -205,6 +212,38 @@ pub async fn extract_delta_traced_with_embedder(
     req: &IngestRequest,
     embedder: Option<&dyn crate::embed::Embedder>,
 ) -> (GraphDelta, Option<TokenUsage>, ExtractTrace) {
+    // A note that states its own graph is parsed exactly, for free. This runs
+    // before subgraph selection: no context selection or model call is needed.
+    if let Some(structured) = crate::structured::extract(&req.text) {
+        let mut delta = structured.delta;
+        let existing: Vec<String> = req.nodes.iter().map(|n| n.label.clone()).collect();
+        dedup_against_existing(&mut delta, &existing);
+        assign_ids(&mut delta, &req.nodes);
+
+        let trace = ExtractTrace {
+            system_prompt: String::new(),
+            user_prompt: String::new(),
+            mock_fallback: false,
+            extraction_path: "structured".to_string(),
+            structured_format: Some(structured.format.to_string()),
+            llm_request: None,
+            llm_raw_response: None,
+            llm_json: None,
+            usage: None,
+            anchors: vec![],
+            subgraph_node_count: 0,
+            subgraph_edge_count: 0,
+            omitted_node_count: 0,
+            omitted_edge_count: 0,
+            estimated_tokens: 0,
+            max_hops: 0,
+            semantic_enabled: false,
+            semantic_anchors: vec![],
+            extractor_version: EXTRACTOR_VERSION.to_string(),
+        };
+        return (delta, None, trace);
+    }
+
     // Bound the context: only the subgraph relevant to the note reaches the
     // LLM. Dedup/ID assignment below still uses the FULL request graph.
     let sel = match embedder {
@@ -224,6 +263,8 @@ pub async fn extract_delta_traced_with_embedder(
         system_prompt: SYSTEM_PROMPT.to_string(),
         user_prompt: build_ingest_user_prompt(&req.text, &sel.nodes, &sel.edges),
         mock_fallback: true,
+        extraction_path: "mock".to_string(),
+        structured_format: None,
         llm_request: None,
         llm_raw_response: None,
         llm_json: None,
@@ -288,6 +329,8 @@ async fn extract_with_llm(
         system_prompt: SYSTEM_PROMPT.to_string(),
         user_prompt: user,
         mock_fallback: false,
+        extraction_path: "llm".to_string(),
+        structured_format: None,
         llm_request: Some(out.trace.request_body),
         llm_raw_response: Some(out.trace.raw_response),
         llm_json: Some(out.json),
@@ -328,6 +371,12 @@ fn labels_match(a: &str, b: &str) -> bool {
 
 /// Relations that assert no specific fact — always a structural guess.
 const GENERIC_RELATIONS: &[&str] = &["related to", "associated with", "connected to"];
+
+/// True when a relation asserts nothing specific, so it can only be inferred.
+pub(crate) fn is_generic_relation(relation: &str) -> bool {
+    let lower = relation.to_lowercase();
+    GENERIC_RELATIONS.iter().any(|generic| lower.contains(generic))
+}
 
 /// Words that carry no grounding signal on their own.
 const RELATION_STOPWORDS: &[&str] = &[
@@ -396,9 +445,7 @@ fn classify_edge(edge: &mut GraphEdge, note: &str) {
         .iter()
         .filter(|t| note_lower.contains(t.as_str()))
         .collect();
-    let generic = GENERIC_RELATIONS
-        .iter()
-        .any(|g| relation_lower.contains(g));
+    let generic = is_generic_relation(&edge.relation);
 
     let kind = if !source_present || !target_present {
         // An endpoint the note never names came from graph context, not from
@@ -843,6 +890,39 @@ mod tests {
                 },
             ],
         }
+    }
+
+    // -- structured notes (no model call) ---------------------------------
+
+    #[test]
+    fn structured_note_bypasses_the_llm() {
+        let client = OpenCodeClient::mock();
+        let req = IngestRequest {
+            text: "# Harry Potter\n- [[Hogwarts]] — studies at\n".to_string(),
+            nodes: vec![GraphNode {
+                id: Some("node-hogwarts".to_string()),
+                label: "Hogwarts".to_string(),
+                kind: "place".to_string(),
+            }],
+            edges: vec![],
+        };
+        let (delta, usage, trace) = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(extract_delta_traced(&client, &req));
+
+        assert_eq!(trace.extraction_path, "structured");
+        assert_eq!(trace.structured_format.as_deref(), Some("markdown"));
+        assert!(usage.is_none(), "deterministic extraction costs no tokens");
+        assert!(trace.system_prompt.is_empty(), "no prompt was sent");
+        assert_eq!(delta.nodes.len(), 1, "the existing node is not re-added");
+        assert_eq!(delta.nodes[0].label, "Harry Potter");
+        assert_eq!(delta.edges.len(), 1);
+        assert_eq!(
+            delta.edges[0].target_id.as_deref(),
+            Some("node-hogwarts"),
+            "edge endpoints reuse existing ids"
+        );
+        assert_eq!(delta.edges[0].confidence, confidence::EXTRACTED);
     }
 
     /// The prompt must carry only the subgraph relevant to the note: the

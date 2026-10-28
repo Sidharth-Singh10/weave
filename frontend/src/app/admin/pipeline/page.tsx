@@ -16,7 +16,7 @@ const STAGE_LABELS: Record<string, string> = {
   rate_limit: "Rate limit",
   quota: "Token quota",
   concurrency: "Concurrency slot",
-  extract: "LLM extraction",
+  extract: "Extract concepts",
   usage: "Record usage",
   response: "Respond",
 };
@@ -197,6 +197,9 @@ function stageBadge(stage: PipelineStage) {
     return { text: "error", className: "rounded-md bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400" };
   }
   const d = stage.detail as Record<string, unknown>;
+  if (stage.stage === "extract" && stage.status === "structured") {
+    return { text: "deterministic", className: "rounded-md bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-400" };
+  }
   if (stage.stage === "extract" && stage.status === "mock") {
     return { text: "mock", className: "rounded-md bg-zinc-500/15 px-2 py-0.5 text-xs font-medium text-zinc-400" };
   }
@@ -214,6 +217,21 @@ function stageBadge(stage: PipelineStage) {
 
 function ExtractDetail({ stage }: { stage: PipelineStage }) {
   const d = stage.detail as Record<string, unknown>;
+
+  // A structured note is parsed in-process: there is no prompt, no response,
+  // and no subgraph selection to show.
+  if (String(d.extraction_path ?? "") === "structured") {
+    return (
+      <div className="rounded-lg border border-line bg-surface p-3 text-xs text-muted">
+        Parsed deterministically from{" "}
+        <span className="font-medium text-foreground">
+          {String(d.structured_format ?? "structured")}
+        </span>{" "}
+        input — no model call, no tokens, identical on every run.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <SubgraphSummary d={d} />

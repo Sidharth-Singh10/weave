@@ -238,7 +238,11 @@ async fn ingest_trace(
     let (delta, usage, trace) =
         weave_core::extract::extract_delta_traced_with_embedder(&state.llm, &req, Some(state.embedder.as_ref()))
             .await;
-    let extract_status = if trace.mock_fallback { "mock" } else { "ok" };
+    let extract_status = match trace.extraction_path.as_str() {
+        "structured" => "structured",
+        _ if trace.mock_fallback => "mock",
+        _ => "ok",
+    };
     stages.push(Stage {
         stage: "extract",
         status: extract_status,
