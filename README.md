@@ -10,6 +10,7 @@ Weave is an AI-powered knowledge graph application. You type plain-language note
 - **Bounded LLM context (V1)** — only the subgraph relevant to a note reaches the extraction LLM (lexical + optional semantic anchors → 2-hop neighborhood, capped at 64 nodes / 256 edges / an estimated-token budget), so ingest cost doesn't scale with graph size.
 - **Web semantic retrieval** — weave-api embeds the request graph on-the-fly (local ONNX): ingest grounding and `/api/graph/search` use hybrid lexical + embedding ranking with explainable similarity; a search box in the canvas header shows ranked results and jumps to nodes.
 - **Graph provenance** — every node/edge records the note that created it (persisted per session); the node inspector shows its originating note and time.
+- **Edge confidence** — every relationship is grounded against the note that produced it and tagged `EXTRACTED` (stated in the note), `INFERRED` (a deduction), or `AMBIGUOUS` (not supported by the note), with the supporting sentence. Inferred edges are drawn dashed, ambiguous ones amber, and the inspector lists each connection with its class and evidence.
 - **Admin pipeline tracer** — an admin-only `/admin/pipeline` page shows every ingest stage end-to-end, including the exact prompt sent to the LLM, the raw response, and the subgraph (lexical + semantic anchors) that was selected.
 - **Infinite canvas** — the graph grows with your knowledge (React Flow).
 - **Interactive editing** — drag, rename (double-click), delete, and connect nodes manually.
@@ -33,7 +34,7 @@ Weave is an AI-powered knowledge graph application. You type plain-language note
   - **Layout intelligence** — a deterministic community-ring layout keeps important nodes central and related nodes close (re-layout button).
   - **Adaptive granularity** — high-degree nodes act as entry points ("+N" badge) and expand into deeper neighborhoods.
   - **Graph flavors** — one knowledge graph, many projections. The **Topic view** tints nodes by kind.
-  - **AI suggestions** — an optional, advisory panel surfaces semantic groups, missing edges, and duplicates.
+  - **AI suggestions** — an optional, advisory panel surfaces semantic groups, missing edges, and duplicates. Structural findings (hubs, bridges, isolated concepts, near-duplicate labels) are computed deterministically; the LLM only names groups and proposes missing edges, from a bounded digest rather than the whole graph.
 
 ## Common Ground adapter
 
@@ -135,7 +136,7 @@ window stays small.
         │  MCP protocol over stdio or Streamable HTTP (JSON-RPC)
         ▼
  ┌────────────────────────── weave-mcp (mcp/) ─────────────────────────┐
- │  server.rs  (MemoryServer + 16 tools)                               │
+ │  server.rs  (MemoryServer + 18 tools)                               │
  │      │             │               │                                │
  │  ingest.rs       recall.rs       graph.rs      (business logic)     │
  │  validate.rs  entity.rs  claims.rs  verify.rs  (V2/V4 semantics)    │
@@ -187,6 +188,8 @@ run; files are stored as hash-keyed blobs under `WEAVE_MCP_DATA_DIR`.
 | `search(query, limit?)` | Full-text notes + keyword entities |
 | `get_node(label)` | An entity and the relations touching it |
 | `get_related(label, depth?)` | BFS subgraph around an entity (up to depth 3) |
+| `explain_node(label)` | One entity's degree and every relation touching it, both directions |
+| `path_between(from, to, max_depth?)` | Shortest path between two entities, hop by hop, with a rendered chain |
 | `recall_memory(query, top_k?, include_contradicted?)` | **Flagship**: hybrid retrieval (vector + FTS + graph + claims) → compact context block |
 | `get_claim(id)` | One evidence-backed claim + its source note + contradictions |
 | `list_claims(entity_label, status?, limit?)` | Claims about an entity, filtered by status |

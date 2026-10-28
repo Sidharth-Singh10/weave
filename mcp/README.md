@@ -54,6 +54,8 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
 | `search(query, limit?)` | Full-text notes + keyword entities |
 | `get_node(label)` | An entity and the relations touching it |
 | `get_related(label, depth?)` | BFS subgraph around an entity (up to depth 3) |
+| `explain_node(label)` | One entity's degree and every relation touching it, both directions |
+| `path_between(from, to, max_depth?)` | Shortest path between two entities, hop by hop, with a rendered chain |
 | `get_claim(id)` | One evidence-backed claim + its source note + contradictions |
 | `list_claims(entity_label, status?, limit?)` | Claims about an entity, filtered by status |
 | `reindex_embeddings(limit?)` | Re-embed rows whose vectors are missing or from an older model |
@@ -71,6 +73,11 @@ names/semantics are stable. Writes are idempotent (identical content returns
 the existing note), every significant mutation is written to `audit_log`
 (actor, action, before/after), and long documents are chunked into `chunk`
 notes linked to the source document.
+
+Lookups never guess. A label that does not resolve exactly returns the
+near-match candidates instead of an answer, and a write that creates a label
+resembling an existing entity reports it in `possible_duplicates` rather than
+silently forking the concept into two.
 
 ## Setup
 
