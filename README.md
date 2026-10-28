@@ -173,6 +173,9 @@ run; files are stored as hash-keyed blobs under `WEAVE_MCP_DATA_DIR`.
 - **Hybrid retrieval (V3)** — local ONNX embeddings (pgvector) + full-text FTS +
   graph expansion, merged with reciprocal-rank fusion into a compact context
   block; `recall_memory` can surface matching claims and flag contradictions.
+  The ranking formula is pinned by an evaluation corpus (`mcp/tests/retrieval_eval.rs`):
+  recall@k and MRR over fixed cases run with no database, so a weight change that
+  makes retrieval worse fails the test suite.
 - **Audit log** — every significant mutation records actor, action, and
   before/after values.
 

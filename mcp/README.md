@@ -79,6 +79,12 @@ near-match candidates instead of an answer, and a write that creates a label
 resembling an existing entity reports it in `possible_duplicates` rather than
 silently forking the concept into two.
 
+The server also sends connection instructions to every client: consult Weave
+before answering questions about prior context, start from `recall_memory`,
+choose from the candidates a lookup offers instead of inventing a label, and
+surface `possible_duplicates`. Clients hand that text to their model, so
+graph-first behaviour does not depend on a user installing an agent file.
+
 ## Setup
 
 Requirements: Rust (edition 2024), Docker (PostgreSQL with the pgvector
@@ -164,3 +170,25 @@ DATABASE_URL=postgres://weave:weave@localhost:5432/weave cargo test -p weave-mcp
 Covers the ingestion pipeline (with provenance + dedup), and an end-to-end MCP
 protocol test that spawns the binary and drives `remember`, `get_note`,
 `search`, `get_node`, `get_related`, `recall_memory`, and `delete_note`.
+
+### Retrieval evaluation
+
+`tests/retrieval_eval.rs` measures recall@k and MRR@k of the ranking formula
+over `tests/fixtures/retrieval_eval.json`. It needs no database, network, or
+embedder — each case supplies the candidate features the scorer sees — so it
+runs in a plain `cargo test`.
+
+```bash
+cargo test -p weave-mcp --test retrieval_eval -- --nocapture
+```
+
+The run prints the ranking and per-case metrics. Change a weight or the hub
+penalty without adding cases to justify it, and the aggregate drops below the
+corpus thresholds and the test fails. When retrieval is found to be wrong in
+practice, add the failing case to the fixture first: the corpus is the record
+of every failure mode already fixed.
+
+Known weaknesses the baseline encodes (visible as sub-1.0 per-case recall):
+over-connected generic concepts can outrank specific content when they are
+mentioned in the query, and a strong keyword match can beat a semantically
+closer one.
