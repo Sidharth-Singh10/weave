@@ -5,8 +5,10 @@ use std::sync::Arc;
 
 use rmcp::ErrorData as McpError;
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::handler::server::ServerHandler;
+use rmcp::model::ServerInfo;
 use rmcp::schemars;
-use rmcp::{tool, tool_router};
+use rmcp::{tool, tool_handler, tool_router};
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
@@ -230,7 +232,7 @@ fn parse_id(raw: &str) -> Result<Uuid, McpError> {
 // Tools
 // ---------------------------------------------------------------------------
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl MemoryServer {
     /// Store a note/fact/memory. Extracts entities and relations, stores them
     /// in the knowledge graph, and returns what was added plus a compact
@@ -819,5 +821,50 @@ impl MemoryServer {
                 "stale": { "notes": stale_notes, "entities": stale_entities, "claims": stale_claims },
             },
         })))
+    }
+}
+
+/// Instructions every MCP client receives when it connects.
+///
+/// This is the "use the graph" rule: an agent that ignores it answers from its
+/// own recollection and duplicates what Weave already knows. Clients surface
+/// this text to their model, so it is the reliable place for it — unlike a
+/// repository file that only a human would read.
+const USAGE_GUIDANCE: &str = r#"Weave is the user's long-term knowledge graph and memory. Consult it before answering questions about their projects, people, preferences, or past decisions, and prefer it over your own recollection.
+
+- Start with recall_memory for any question about prior context. It returns a compact, ready-to-use context block rather than raw notes.
+- explain_node describes one concept; path_between shows how two concepts are connected; get_related explores a neighborhood.
+- Labels must resolve exactly. If a lookup replies "Did you mean", choose one of those candidates instead of inventing a label.
+- Store durable facts with remember. Never store secrets, credentials, or transient state.
+- If a write reports possible_duplicates, the graph may now hold the same concept twice. Tell the user rather than ignoring it."#;
+
+#[tool_handler]
+impl ServerHandler for MemoryServer {
+    fn get_info(&self) -> ServerInfo {
+        // `ServerInfo` is non-exhaustive in rmcp 3, so mutate the default.
+        let mut info = ServerInfo::default();
+        info.instructions = Some(USAGE_GUIDANCE.to_string());
+        info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The connection instructions are the only place an agent is told to use
+    /// the graph; if they stop naming the entry points they stop working.
+    #[test]
+    fn usage_guidance_names_the_entry_points() {
+        for tool in ["recall_memory", "explain_node", "path_between", "remember"] {
+            assert!(
+                USAGE_GUIDANCE.contains(tool),
+                "usage guidance must mention `{tool}`"
+            );
+        }
+        assert!(
+            USAGE_GUIDANCE.contains("possible_duplicates"),
+            "usage guidance must tell the agent to surface duplicate warnings"
+        );
     }
 }
