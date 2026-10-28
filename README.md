@@ -7,6 +7,7 @@ Weave is an AI-powered knowledge graph application. You type plain-language note
 ## Features
 
 - **Automatic graph construction** — enter a note, get nodes and edges. Existing concepts are recognized and reused, never duplicated.
+- **Deterministic extraction** — a note that already states its graph (a Markdown outline of `- [[Target]] — relation`, or a JSON `{nodes, edges}` document) is parsed in-process: no model call, no tokens, identical on every run, and every edge `EXTRACTED` with the source line as evidence. Mostly-prose notes still go to the LLM. See [Deterministic extraction](#deterministic-extraction).
 - **Bounded LLM context (V1)** — only the subgraph relevant to a note reaches the extraction LLM (lexical + optional semantic anchors → 2-hop neighborhood, capped at 64 nodes / 256 edges / an estimated-token budget), so ingest cost doesn't scale with graph size.
 - **Web semantic retrieval** — weave-api embeds the request graph on-the-fly (local ONNX): ingest grounding and `/api/graph/search` use hybrid lexical + embedding ranking with explainable similarity; a search box in the canvas header shows ranked results and jumps to nodes.
 - **Graph provenance** — every node/edge records the note that created it (persisted per session); the node inspector shows its originating note and time.
@@ -36,6 +37,38 @@ Weave is an AI-powered knowledge graph application. You type plain-language note
   - **Adaptive granularity** — high-degree nodes act as entry points ("+N" badge) and expand into deeper neighborhoods.
   - **Graph flavors** — one knowledge graph, many projections. The **Topic view** tints nodes by kind.
   - **AI suggestions** — an optional, advisory panel surfaces semantic groups, missing edges, and duplicates. Structural findings (hubs, bridges, isolated concepts, near-duplicate labels) are computed deterministically; the LLM only names groups and proposes missing edges, from a bounded digest rather than the whole graph.
+
+## Deterministic extraction
+
+Not every note needs a model. When a note already states its graph, `weave-core`
+parses it directly (`crates/weave-core/src/structured.rs`) before any model call:
+
+```markdown
+# Ada Lovelace
+- [[Analytical Engine]] — programmed
+- [[Charles Babbage]] — corresponded with
+```
+
+- The shallowest heading level names entities; deeper headings
+  (`## Relationships`) are section labels, so their bullets stay attached to
+  the entity above.
+- `[[Target]] — relation` becomes an edge. A link with no stated relation
+  becomes `links to`; aliases (`[[Target|shown text]]`) and heading anchors
+  (`[[Note#section]]`) resolve to the target's label. Links in code fences are
+  ignored, and self-links are dropped.
+- JSON works too: `{ "nodes": [{ "label", "kind" }], "edges": [{ "source",
+  "target", "relation" }] }`, or an array of nodes with nested `relations`.
+
+Edges keep the wording of the note, so they are `EXTRACTED` with the source line
+as evidence (`INFERRED` for a generic relation such as "related to"). No tokens
+are spent and repeated ingests produce identical output.
+
+The tier is deliberately conservative: a note is parsed only if at least 60% of
+its lines are headings, bullets, or links, **and** it yields at least one edge.
+Mostly-prose notes — including an Obsidian note that merely mentions a few
+links — still go to the LLM, which also infers what the note does not state.
+The admin pipeline tracer labels the path `deterministic` and shows the format
+that was parsed.
 
 ## Common Ground adapter
 
@@ -418,7 +451,7 @@ All graph endpoints require a session and the matching `graph.*` permission.
 
 | Route | Method | Description |
 |---|---|---|
-| `/api/graph/ingest` | POST | Extract a delta (new nodes/edges) from a note — the extraction LLM receives only the relevant bounded subgraph |
+| `/api/graph/ingest` | POST | Extract a delta (new nodes/edges) from a note — structured Markdown/JSON is parsed deterministically; otherwise the extraction LLM receives only the relevant bounded subgraph |
 | `/api/graph/organize` | POST | Advisory AI analysis (groups, missing edges, duplicates) |
 | `/api/graph/label-community` | POST | Suggest a name for a detected community |
 | `/api/graph/search` | POST | Semantic search over the graph |

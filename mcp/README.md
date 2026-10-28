@@ -22,7 +22,10 @@ Agent ──MCP stdio──▶ weave-mcp ──▶ weave-core (LLM extraction)
   context; `get_note` fetches full text on demand).
 - **Knowledge graph** — each note is extracted into entities + relations,
   resolved against the persisted graph (no duplicate concepts), with
-  provenance linking notes → nodes/edges.
+  provenance linking notes → nodes/edges. A note that already states its graph
+  (a Markdown outline of `- [[Target]] — relation` or a JSON `{nodes, edges}`
+  document) is parsed deterministically instead — no model call, no tokens —
+  and its edges keep the source line as evidence.
 - **Claims** — the durable memory unit: every extracted statement is
   validated (labels, predicates, self-loops), resolved deterministically
   (exact → alias → create), given an evidence span from the source note, a
