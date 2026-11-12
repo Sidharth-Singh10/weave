@@ -144,6 +144,15 @@ The frontend (Next.js) is a same-origin gateway: `next.config.ts` rewrites `/api
 Browser → Next.js (:3000) ──/api, /auth──▶ weave-api (:3001) ──▶ PostgreSQL, Redis, LLM
 ```
 
+### Public demo
+
+A sign-in-free entry point exists for demos and submissions: set `DEMO_MODE=true` on
+weave-api and `NEXT_PUBLIC_DEMO_MODE=true` on the frontend, and the landing page's
+primary call to action leads to `/demo`, which mints a non-admin member session and
+seeds a worked example graph on first visit. With either flag off, the product behaves
+exactly as before. See [`docs/DEMO.md`](docs/DEMO.md) for deployment, configuration,
+and the `npm run demo:smoke` checks.
+
 ### Stack
 
 | Layer | Tech |
@@ -504,7 +513,8 @@ Backend variables are documented in `backend/.env.example`. Key ones:
 ```bash
 npm run build    # frontend production build
 npm run lint     # frontend ESLint
-npm test         # frontend unit tests (node:test) — export writers + ZIP
+npm test -w frontend   # frontend unit tests (node:test) — export writers, ZIP, demo seed
+npm run demo:smoke -- https://<domain>   # public demo checks (landing, demo login, session, API)
 cd backend && cargo test          # backend unit + integration tests
 cd frontend && npx playwright test  # e2e (requires docker compose up -d)
 cargo test --workspace            # backend + weave-core + mcp tests
