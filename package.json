@@ -9,6 +9,7 @@
     "dev": "npm run dev -w frontend",
     "build": "npm run build -w frontend",
     "lint": "npm run lint -w frontend",
-    "cg:smoke": "node scripts/cg-smoke.mjs"
+    "cg:smoke": "node scripts/cg-smoke.mjs",
+    "demo:smoke": "node scripts/demo-smoke.mjs"
   }
 }
