@@ -19,6 +19,10 @@ pub struct Config {
     pub frontend_url: String,
     pub allowed_origins: Vec<String>,
     pub auth_stub: bool,
+    /// Public, sign-in-free demo access (`POST /auth/demo/login`).
+    pub demo_mode: bool,
+    /// Per-IP demo-login throttle, shared with the OAuth throttles' window.
+    pub demo_login_limit_per_10_min: u64,
 
     pub session_cookie_name: String,
     pub session_ttl_seconds: i64,
@@ -63,6 +67,8 @@ impl Config {
             frontend_url,
             allowed_origins,
             auth_stub: env_bool("AUTH_STUB"),
+            demo_mode: env_bool("DEMO_MODE"),
+            demo_login_limit_per_10_min: env_u64("DEMO_LOGIN_LIMIT_PER_10_MIN", 30),
             session_cookie_name: env("SESSION_COOKIE_NAME", "weave_session"),
             session_ttl_seconds: env_i64("SESSION_TTL_SECONDS", 2_592_000),
             bootstrap_admin_emails: env_list("BOOTSTRAP_ADMIN_EMAILS"),
@@ -142,6 +148,8 @@ impl Config {
             frontend_url: "http://localhost:3000".to_string(),
             allowed_origins: vec!["http://localhost:3000".to_string()],
             auth_stub: false,
+            demo_mode: false,
+            demo_login_limit_per_10_min: 30,
             session_cookie_name: "weave_session".to_string(),
             session_ttl_seconds: 3_600,
             bootstrap_admin_emails: vec![],
@@ -170,6 +178,8 @@ mod tests {
         "FRONTEND_URL",
         "CORS_ALLOWED_ORIGINS",
         "AUTH_STUB",
+        "DEMO_MODE",
+        "DEMO_LOGIN_LIMIT_PER_10_MIN",
         "SESSION_COOKIE_NAME",
         "SESSION_TTL_SECONDS",
         "BOOTSTRAP_ADMIN_EMAILS",
@@ -231,6 +241,8 @@ mod tests {
         assert_eq!(c.hard_ceiling_requests_per_minute, 300);
         assert_eq!(c.hard_ceiling_tokens_per_day, 20_000_000);
         assert!(!c.auth_stub);
+        assert!(!c.demo_mode);
+        assert_eq!(c.demo_login_limit_per_10_min, 30);
         assert_eq!(c.max_body_bytes, 2 * 1024 * 1024);
         assert!(
             c.allowed_origins
@@ -245,6 +257,8 @@ mod tests {
             ("DATABASE_URL", "postgres://t"),
             ("REDIS_URL", "redis://t"),
             ("AUTH_STUB", "true"),
+            ("DEMO_MODE", "true"),
+            ("DEMO_LOGIN_LIMIT_PER_10_MIN", "5"),
             ("SESSION_TTL_SECONDS", "60"),
             ("HARD_CEILING_REQUESTS_PER_MINUTE", "100"),
             ("BOOTSTRAP_ADMIN_EMAILS", "a@x.com, b@x.com"),
@@ -252,6 +266,8 @@ mod tests {
         ]);
         let c = Config::from_env();
         assert!(c.auth_stub);
+        assert!(c.demo_mode);
+        assert_eq!(c.demo_login_limit_per_10_min, 5);
         assert_eq!(c.session_ttl_seconds, 60);
         assert_eq!(c.hard_ceiling_requests_per_minute, 100);
         assert_eq!(c.bootstrap_admin_emails, vec!["a@x.com", "b@x.com"]);

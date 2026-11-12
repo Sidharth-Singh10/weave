@@ -30,6 +30,7 @@ use oauth::OidcIdentity;
 const OAUTH_STATE_PREFIX: &str = "oauth:state:";
 const AUTH_INIT_KEY_PREFIX: &str = "auth:init:";
 const AUTH_CALLBACK_KEY_PREFIX: &str = "auth:cb:";
+const DEMO_LOGIN_KEY_PREFIX: &str = "auth:demo:";
 const STATE_TTL_SECONDS: u64 = 600;
 
 /// Build the `/auth/*` router.
@@ -41,6 +42,7 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/logout-all", post(logout_all))
         .route("/auth/me", get(me))
         .route("/auth/test/login", post(test_login))
+        .route("/auth/demo/login", post(demo_login))
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +414,103 @@ async fn test_login(
     Ok((jar, Json(body)).into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Public demo login
+// ---------------------------------------------------------------------------
+
+/// Creates a session for a fresh demo identity. Enabled only when
+/// `DEMO_MODE=true`; otherwise the route behaves as if it does not exist.
+///
+/// Every visitor gets their own account. Rate-limit and quota counters are keyed
+/// by user id, so a single shared demo user would make all visitors compete for
+/// one budget. The identity can never be bootstrap-admin eligible, and the
+/// handler refuses to issue a session for anything but a non-admin account.
+async fn demo_login(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if !state.config.demo_mode {
+        return Err(ApiError::new(ApiErrorKind::NotFound));
+    }
+
+    // Login-abuse throttle: IP-based, short-lived. Fail-open on Redis errors,
+    // matching the OAuth throttles, so an outage cannot lock visitors out.
+    let ip = request_ip(&headers, Some(addr));
+    let key = format!("{DEMO_LOGIN_KEY_PREFIX}{ip}");
+    match state.redis.increment_window(&key, STATE_TTL_SECONDS).await {
+        Ok(count) if count > state.config.demo_login_limit_per_10_min => {
+            tracing::warn!(ip = %ip, count, "demo login throttled");
+            return Err(ApiError::new(ApiErrorKind::RateLimitExceeded {
+                retry_after_seconds: STATE_TTL_SECONDS,
+            }));
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "redis down; skipping demo login throttle");
+        }
+    }
+
+    let demo_id = uuid::Uuid::new_v4();
+    let identity = OidcIdentity {
+        subject: format!("demo:{demo_id}"),
+        email: format!("demo+{demo_id}@weave.local"),
+        name: Some("Demo visitor".to_string()),
+        picture: None,
+    };
+
+    let user = users::find_or_create_user(&state.db, &state.config, &identity)
+        .await
+        .map_err(ApiError::from)?
+        .0;
+
+    if user.status != "active" {
+        return Err(ApiError::new(ApiErrorKind::Unauthorized));
+    }
+    if user.role_name == "admin" {
+        tracing::error!(user_id = %user.id, "refusing a demo session for an admin account");
+        return Err(ApiError::new(ApiErrorKind::Forbidden));
+    }
+
+    let token = sessions::generate_token();
+    sessions::create_session(
+        &state.db,
+        user.id,
+        &token,
+        state.config.session_ttl_seconds,
+        Some(&hash_ip(&ip)),
+        None,
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    tracing::info!(user_id = %user.id, "demo login");
+
+    analytics::record_spawn(
+        &state.db,
+        analytics::AnalyticsEvent {
+            user_id: Some(user.id),
+            event_type: event_type::LOGIN,
+            request_id: None,
+            endpoint: None,
+            metadata: None,
+        },
+    );
+
+    let jar = CookieJar::new().add(build_session_cookie(&state.config, &token));
+    let body = json!({
+        "authenticated": true,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "avatar_url": user.avatar_url,
+            "role": user.role_name,
+        }
+    });
+    Ok((jar, Json(body)).into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,7 +526,7 @@ mod tests {
 
     /// Build a test state + router. Returns None when the live dependencies are
     /// unavailable, which makes the test a no-op outside a configured dev env.
-    async fn test_app() -> Option<(Router, std::sync::MutexGuard<'static, ()>)> {
+    async fn test_app(demo_mode: bool) -> Option<(Router, std::sync::MutexGuard<'static, ()>)> {
         let guard = crate::testutil::db_lock::LOCK.lock().unwrap();
         let db_url = std::env::var("DATABASE_URL").ok()?;
         let redis_url = std::env::var("REDIS_URL").ok()?;
@@ -436,6 +535,7 @@ mod tests {
 
         let mut config = Config::from_env();
         config.auth_stub = true;
+        config.demo_mode = demo_mode;
         config.session_cookie_name = "weave_session".to_string();
 
         let state = AppState {
@@ -454,7 +554,14 @@ mod tests {
                 },
             )),
         };
-        Some((routes().with_state(state), guard))
+        Some((
+            routes()
+                .layer(axum::extract::connect_info::MockConnectInfo(
+                    std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+                ))
+                .with_state(state),
+            guard,
+        ))
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -464,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn stub_login_me_logout_flow() {
-        let Some((app, _guard)) = test_app().await else {
+        let Some((app, _guard)) = test_app(true).await else {
             eprintln!("skipping: DATABASE_URL/REDIS_URL not set or unavailable");
             return;
         };
@@ -556,5 +663,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body_json(res).await["authenticated"], false);
+    }
+
+    #[tokio::test]
+    async fn demo_login_is_absent_unless_enabled() {
+        let Some((app, _guard)) = test_app(false).await else {
+            eprintln!("skipping: DATABASE_URL/REDIS_URL not set or unavailable");
+            return;
+        };
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/demo/login")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn demo_login_creates_a_member_session() {
+        let Some((app, _guard)) = test_app(true).await else {
+            eprintln!("skipping: DATABASE_URL/REDIS_URL not set or unavailable");
+            return;
+        };
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/demo/login")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+
+        let cookie = res
+            .headers()
+            .get("set-cookie")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(cookie.contains("weave_session="));
+
+        let body = body_json(res).await;
+        assert_eq!(body["authenticated"], true);
+        assert_eq!(body["user"]["role"], "member");
+        let email = body["user"]["email"].as_str().unwrap();
+        assert!(email.starts_with("demo+") && email.ends_with("@weave.local"));
     }
 }
