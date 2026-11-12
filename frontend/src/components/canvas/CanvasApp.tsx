@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -9,6 +9,7 @@ import {
   ReactFlow,
   SelectionMode,
   useReactFlow,
+  useNodesInitialized,
   ReactFlowProvider,
 } from "@xyflow/react";
 import { Graph } from "@phosphor-icons/react";
@@ -36,10 +37,22 @@ function Flow() {
   const relayout = useGraphStore((s) => s.relayout);
   const onMove = useSemanticZoom();
   const { fitView } = useReactFlow();
+  const nodeCount = useGraphStore((s) => s.knowledgeNodes.length);
+  const nodesInitialized = useNodesInitialized();
 
   const onInit = useCallback(() => {
     fitView({ padding: 0.3, duration: 0 });
   }, [fitView]);
+
+  // A restored session hydrates after React Flow has initialised, so the init
+  // fitView runs against an empty canvas. Frame the graph once its nodes have
+  // been measured, or fitView has nothing to fit.
+  const framed = useRef(false);
+  useEffect(() => {
+    if (framed.current || nodeCount === 0 || !nodesInitialized) return;
+    framed.current = true;
+    fitView({ padding: 0.3, duration: 0 });
+  }, [nodeCount, nodesInitialized, fitView]);
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-background">
