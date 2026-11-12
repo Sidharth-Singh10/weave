@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
+import { canvasEntryHref } from "@/lib/demo-mode";
 import { MiniGraphDemo } from "./MiniGraphDemo";
 
 export function Hero() {
@@ -44,7 +45,7 @@ export function Hero() {
 
         <motion.div {...fade(0.24)} className="mt-8 flex items-center gap-4">
           <Link
-            href="/app"
+            href={canvasEntryHref}
             className="rounded-xl bg-accent px-6 py-3 text-sm font-medium text-accent-ink transition-transform active:scale-[0.97]"
           >
             Open the canvas

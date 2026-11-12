@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { canvasEntryHref } from "@/lib/demo-mode";
 
 export function CtaFooter() {
   return (
@@ -12,7 +13,7 @@ export function CtaFooter() {
             Your next note is one sentence away from becoming a map.
           </p>
           <Link
-            href="/app"
+            href={canvasEntryHref}
             className="mt-9 inline-block rounded-xl bg-accent px-7 py-3.5 text-sm font-medium text-accent-ink transition-transform active:scale-[0.97]"
           >
             Open the canvas

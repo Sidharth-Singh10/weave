@@ -20,6 +20,7 @@ export const SAVE_TIMEOUT_MS = 300;
 
 const LS_SESSIONS = "weave:sessions";
 const LS_ACTIVE = "weave:active-session";
+const LS_DEMO_SEEDED = "weave:demo-seeded";
 const lsScene = (id: string) => `weave:session:${id}`;
 const lsVersion = (id: string) => `weave:version:${id}`;
 
@@ -395,6 +396,51 @@ export function flushSave(): void {
   debouncedSave.cancel();
 }
 
+/**
+ * Install a prepared scene (the public demo's first paint) into a session, once
+ * per browser.
+ *
+ * Called from `/demo` before the canvas mounts. It never overwrites a session
+ * that already holds a graph: a visitor who has been weaving keeps their work.
+ */
+export function seedDemoSession(scene: PersistedScene, name = "Demo"): boolean {
+  if (typeof window === "undefined") return false;
+  if (readLS(LS_DEMO_SEEDED)) return false;
+
+  const sessions = listSessions();
+  const hasContent = sessions.some((session) => {
+    const existing = loadScene(session.id);
+    return !!existing && (existing.nodes.length > 0 || existing.edges.length > 0);
+  });
+  if (hasContent) {
+    writeLS(LS_DEMO_SEEDED, "1");
+    return false;
+  }
+
+  let target = sessions[0];
+  if (!target) {
+    target = {
+      id: generateId(),
+      name,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  // An empty session from a previous visit is reused rather than duplicated.
+  const nextSessions = (sessions.length > 0 ? sessions : [target]).map((session) =>
+    session.id === target.id ? { ...session, name } : session
+  );
+  persistSessions(nextSessions);
+  useGraphStore.getState().setSessions(nextSessions);
+
+  saveScene(target.id, { ...scene, savedAt: Date.now() });
+  setActiveSessionId(target.id);
+  useGraphStore.setState({ activeSessionId: target.id });
+  writeLS(LS_DEMO_SEEDED, "1");
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Cross-tab sync (Excalidraw `tabSync` analog)
 // ---------------------------------------------------------------------------
@@ -456,7 +502,9 @@ export function initPersistence(): () => void {
       scene.nodes.length > 0 ||
       scene.edges.length > 0 ||
       Object.keys(scene.positions).length > 0;
-    if (hasContent) {
+    // A demo visitor did not restore anything of their own; announcing a
+    // restored session there would be noise on the first paint.
+    if (hasContent && !readLS(LS_DEMO_SEEDED)) {
       const meta = sessions.find((s) => s.id === activeId);
       usePersistenceStatus.getState().setRestoredSession(meta?.name ?? null);
     }

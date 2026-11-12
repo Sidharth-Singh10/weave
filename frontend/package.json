@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/export.test.ts src/lib/zip.test.ts"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/export.test.ts src/lib/zip.test.ts src/lib/demo-graph.test.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

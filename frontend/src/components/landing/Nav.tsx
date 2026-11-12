@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { canvasEntryHref } from "@/lib/demo-mode";
 
 export function Nav() {
   return (
@@ -18,7 +19,7 @@ export function Nav() {
         </div>
 
         <Link
-          href="/app"
+          href={canvasEntryHref}
           className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-transform active:scale-[0.97]"
         >
           Open the canvas
