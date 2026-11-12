@@ -130,6 +130,12 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       BOOTSTRAP_ADMIN_EMAILS: ${BOOTSTRAP_ADMIN_EMAILS:-}
       AUTH_STUB: ${AUTH_STUB:-false}
+      # Public demo access (see docs/DEMO.md). Off unless explicitly enabled.
+      DEMO_MODE: ${DEMO_MODE:-false}
+      DEMO_LOGIN_LIMIT_PER_10_MIN: ${DEMO_LOGIN_LIMIT_PER_10_MIN:-30}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-2592000}
+      HARD_CEILING_REQUESTS_PER_MINUTE: ${HARD_CEILING_REQUESTS_PER_MINUTE:-300}
+      HARD_CEILING_TOKENS_PER_DAY: ${HARD_CEILING_TOKENS_PER_DAY:-20000000}
       # Local ONNX embeddings for semantic retrieval on the web path.
       WEAVE_API_EMBEDDING_MODEL: ${WEAVE_API_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       HF_HOME: /data/hf
