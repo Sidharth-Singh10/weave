@@ -1,20 +1,31 @@
 @import "tailwindcss";
 
 /*
- * Weave design tokens - dark theme locked (one theme per surface).
- * One accent: emerald. Off-black base, off-white text. No pure #000 / #fff.
+ * Weave design tokens.
+ *
+ * One theme (dark), one accent (emerald), one shape system:
+ * panels 16px, controls 12px, tags pill. Semantic amber and red are reserved
+ * for confidence, warnings, and errors; they are never decorative.
  */
 :root {
-  --background: #09090b;
-  --foreground: #f4f4f5;
-  --surface: #101013;
-  --surface-2: #18181b;
-  --line: #27272a;
-  --muted: #a1a1aa;
-  --faint: #52525b;
+  --background: #08090a;
+  --foreground: #f2f4f5;
+  --surface: #0e1013;
+  --surface-2: #15181c;
+  --surface-3: #1b1f24;
+  --line: #24282e;
+  --line-bright: #363c45;
+  --muted: #a8b0ba;
+  --faint: #77818e;
   --accent: #34d399;
+  --accent-bright: #4ee6ad;
   --accent-dim: #10b981;
-  --accent-ink: #052e22;
+  --accent-ink: #042a1f;
+  --warning: #f5b14c;
+  --danger: #f87171;
+  --shadow-panel: 0 24px 70px -28px rgb(0 0 0 / 0.8),
+    0 1px 0 0 rgb(255 255 255 / 0.04) inset;
+  --shadow-float: 0 18px 60px -20px rgb(0 0 0 / 0.78);
 }
 
 @theme inline {
@@ -22,14 +33,26 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-line: var(--line);
+  --color-line-bright: var(--line-bright);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
   --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
   --color-accent-dim: var(--accent-dim);
   --color-accent-ink: var(--accent-ink);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-bricolage);
+  --shadow-panel: var(--shadow-panel);
+  --shadow-float: var(--shadow-float);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -38,9 +61,61 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+h1 {
+  font-family: var(--font-display), var(--font-geist-sans), system-ui, sans-serif;
+  letter-spacing: -0.04em;
+}
+
+section[id] {
+  scroll-margin-top: 5.5rem;
+}
+
 ::selection {
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+  opacity: 1;
+}
+
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Woven dot paper. Used behind product instruments, never behind body copy. */
+.weave-grid {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgb(255 255 255 / 0.09) 1px,
+    transparent 0
+  );
+  background-size: 26px 26px;
+}
+
+/* Film grain, kept faint enough to read as texture rather than noise. */
+.weave-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  mix-blend-mode: screen;
+}
+
+.weave-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-bright) transparent;
+}
+
+.weave-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.weave-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--line-bright);
 }
 
 @keyframes weave-marquee {
@@ -53,6 +128,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
   *,
   *::before,
   *::after {
