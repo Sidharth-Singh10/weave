@@ -9,6 +9,7 @@ import { usePersistenceStatus } from "@/lib/usePersistenceStatus";
 import { TOPIC_COLORS } from "@/lib/graph-projection";
 import type { ViewType } from "@/lib/graph-types";
 import { UserMenu } from "@/components/auth/UserMenu";
+import { Logo } from "@/components/ui/Logo";
 import { SessionSwitcher } from "./SessionSwitcher";
 import { ExportMenu } from "./ExportMenu";
 import { CommonGroundBadge } from "./CommonGroundBadge";
@@ -47,18 +48,16 @@ export function CanvasHeader() {
     : undefined;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-4 border-b border-line bg-surface/80 px-4 py-2 backdrop-blur-md">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface/85 px-3 py-2 backdrop-blur-md md:flex-nowrap md:px-4">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold tracking-tight text-foreground">
-          Weave
-        </span>
+        <Logo size={22} />
         <CommonGroundBadge />
       </div>
 
       <GraphSearch />
 
       {isTopic && topics.length > 0 && (
-        <div className="pointer-events-none flex min-w-0 items-center gap-1.5 overflow-x-auto">
+        <div className="pointer-events-none hidden min-w-0 items-center gap-1.5 overflow-x-auto xl:flex">
           {topics.map(([kind, color]) => (
             <span
               key={kind}
@@ -75,7 +74,7 @@ export function CanvasHeader() {
       )}
 
       {!isTopic && communities.length > 0 && (
-        <div className="pointer-events-none flex min-w-0 items-center gap-1.5 overflow-x-auto">
+        <div className="pointer-events-none hidden min-w-0 items-center gap-1.5 overflow-x-auto xl:flex">
           {communities.map((c) => (
             <span
               key={c.signature}
@@ -92,8 +91,9 @@ export function CanvasHeader() {
       )}
 
       {selectedLabel && (
-        <div className="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-background/60 px-2.5 py-1 text-xs">
+        <div className="pointer-events-auto order-last flex min-w-0 items-center gap-1.5 rounded-xl border border-line bg-background/60 px-2.5 py-1 text-xs md:order-none">
           <button
+            type="button"
             onClick={() => selectNode(undefined)}
             className="text-faint transition-colors hover:text-foreground"
           >
@@ -102,6 +102,7 @@ export function CanvasHeader() {
           <span className="text-faint">›</span>
           <span className="truncate font-medium text-muted">{selectedLabel}</span>
           <button
+            type="button"
             title="Expand neighborhood"
             aria-label="Expand neighborhood"
             onClick={() =>
@@ -119,13 +120,14 @@ export function CanvasHeader() {
       <div className="pointer-events-auto flex items-center gap-2">
         <SessionSwitcher />
         <ExportMenu />
-        <div className="flex items-center gap-0.5 rounded-lg border border-line bg-background/80 p-0.5">
+        <div className="flex items-center gap-0.5 rounded-xl border border-line bg-background/80 p-0.5">
           {VIEW_ORDER.map((v) => (
             <button
               key={v}
+              type="button"
               onClick={() => setViewConfig({ type: v })}
               className={[
-                "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors sm:px-3",
                 viewConfig.type === v
                   ? "bg-accent text-accent-ink"
                   : "text-muted hover:text-foreground",
@@ -135,11 +137,12 @@ export function CanvasHeader() {
             </button>
           ))}
           <button
+            type="button"
             onClick={() => void requestInsights()}
             title="Ask AI for suggestions"
             aria-label="Ask AI for suggestions"
             className={[
-              "ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+              "ml-1 flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-colors",
               hasInsights
                 ? "bg-accent/15 text-accent"
                 : "text-faint hover:text-foreground",
@@ -164,8 +167,8 @@ function QuotaBanner() {
   if (!quotaExceeded) return null;
   return (
     <div className="pointer-events-none absolute inset-x-0 top-full z-20 flex justify-center pt-2">
-      <div className="pointer-events-auto rounded-lg border border-amber-500/40 bg-surface px-3 py-1.5 text-xs text-amber-300 shadow-lg">
-        Storage full — the latest changes may not be saved.
+      <div className="pointer-events-auto rounded-xl border border-warning/40 bg-surface px-3 py-1.5 text-xs text-warning shadow-float">
+        Storage full. The latest changes may not be saved.
       </div>
     </div>
   );
@@ -185,7 +188,7 @@ function RestoredSessionToast() {
   if (!restoredSession) return null;
   return (
     <div className="pointer-events-none absolute inset-x-0 top-full z-20 flex justify-center pt-2">
-      <div className="pointer-events-auto rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-muted shadow-lg">
+      <div className="pointer-events-auto rounded-xl border border-line bg-surface px-3 py-1.5 text-xs text-muted shadow-float">
         Restored <span className="font-medium text-foreground">{restoredSession}</span>
       </div>
     </div>
@@ -243,20 +246,21 @@ function GraphSearch() {
   const highlight = new Set((result?.matches ?? []).map((m) => m.toLowerCase()));
 
   return (
-    <div className="pointer-events-auto relative w-64">
+    <div className="pointer-events-auto relative w-full min-w-0 sm:w-64">
       <form onSubmit={run} className="relative">
         <input
           value={query}
+          aria-label="Search the graph"
           onChange={(e) => {
             setQuery(e.target.value);
             if (!e.target.value) setOpen(false);
           }}
-          placeholder="Search the graph…"
-          className="w-full rounded-lg border border-line bg-background/80 py-1 pl-7 pr-7 text-xs text-foreground outline-none transition-colors focus:border-accent"
+          placeholder="Search the graph..."
+          className="w-full rounded-xl border border-line bg-background/80 py-1 pl-7 pr-7 text-xs text-foreground outline-none transition-colors focus:border-accent"
         />
         <MagnifyingGlass
           size={13}
-          className="absolute left-2 top-1/2 -translate-y-1/2 text-faint"
+          className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-faint"
         />
         {query && (
           <button
@@ -274,9 +278,9 @@ function GraphSearch() {
       </form>
 
       {open && result && (
-        <div className="absolute left-0 right-0 top-full mt-1 max-h-72 overflow-auto rounded-lg border border-line bg-surface shadow-lg">
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-auto rounded-2xl border border-line bg-surface shadow-float">
           {loading ? (
-            <p className="px-3 py-2 text-xs text-faint">Searching…</p>
+            <p className="px-3 py-2 text-xs text-faint">Searching...</p>
           ) : (
             <>
               {result.rationale && (
@@ -290,6 +294,7 @@ function GraphSearch() {
                     {result.matches.map((m) => (
                       <li key={m}>
                         <button
+                          type="button"
                           onClick={() => jumpTo(m)}
                           className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-surface-2"
                         >
@@ -310,6 +315,7 @@ function GraphSearch() {
                       </p>
                       {result.semantic.map((s) => (
                         <button
+                          type="button"
                           key={s.label}
                           onClick={() => jumpTo(s.label)}
                           className="mt-0.5 flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"

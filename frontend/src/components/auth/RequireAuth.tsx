@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useAuthStore, redirectToLogin } from "@/lib/auth";
+import { Logo } from "@/components/ui/Logo";
 
 /**
  * Client-side auth guard. The server (proxy.ts + backend /auth/me) is
@@ -20,8 +21,17 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (status === "loading") {
     return (
-      <div className="grid min-h-dvh place-items-center text-sm text-faint">
-        Loading…
+      <div
+        role="status"
+        aria-live="polite"
+        className="grid min-h-dvh place-items-center bg-background"
+      >
+        <div className="flex flex-col items-center gap-4">
+          <Logo />
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">
+            Opening your canvas
+          </p>
+        </div>
       </div>
     );
   }

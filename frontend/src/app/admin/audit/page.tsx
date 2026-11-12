@@ -29,7 +29,7 @@ export default function AuditPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold tracking-tight">Audit Log</h1>
+        <h1 className="font-display text-xl font-semibold tracking-[-0.03em]">Audit Log</h1>
         <select
           value={action}
           onChange={(e) => {

@@ -195,7 +195,7 @@ export function CommonGroundPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="pointer-events-auto fixed right-4 top-14 z-50 flex max-h-[min(70vh,560px)] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-line bg-surface/95 text-foreground shadow-2xl backdrop-blur-md">
+    <div className="pointer-events-auto fixed right-4 top-16 z-50 flex max-h-[min(70vh,560px)] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-line bg-surface/95 text-foreground shadow-float backdrop-blur-md">
       <div className="flex items-center gap-2 border-b border-line px-3 py-2">
         <span className="text-xs font-semibold">Common Ground</span>
         {meta && (

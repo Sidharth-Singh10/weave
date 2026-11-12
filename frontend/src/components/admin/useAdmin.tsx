@@ -43,11 +43,29 @@ export function useAdmin<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   return { data, error, loading, reload };
 }
 
-export function AdminState({ loading, error, children }: { loading: boolean; error: string | null; children: React.ReactNode }) {
-  if (loading) return <p className="text-sm text-faint">Loading…</p>;
+export function AdminState({
+  loading,
+  error,
+  children,
+}: {
+  loading: boolean;
+  error: string | null;
+  children: React.ReactNode;
+}) {
+  if (loading) {
+    return (
+      <div aria-busy="true" aria-label="Loading" className="space-y-3">
+        <div className="h-20 animate-pulse rounded-2xl border border-line bg-surface" />
+        <div className="h-64 animate-pulse rounded-2xl border border-line bg-surface" />
+      </div>
+    );
+  }
   if (error) {
     return (
-      <div className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">
+      <div
+        role="alert"
+        className="rounded-2xl border border-warning/25 bg-warning/[0.06] px-4 py-3 text-sm text-muted"
+      >
         {error}
       </div>
     );
@@ -55,25 +73,41 @@ export function AdminState({ loading, error, children }: { loading: boolean; err
   return <>{children}</>;
 }
 
-export function Card({ title, value, sub }: { title: string; value: React.ReactNode; sub?: string }) {
+export function Card({
+  title,
+  value,
+  sub,
+}: {
+  title: string;
+  value: React.ReactNode;
+  sub?: string;
+}) {
   return (
-    <div className="rounded-xl border border-line bg-surface p-4">
-      <div className="text-xs text-faint">{title}</div>
-      <div className="mt-1 text-2xl font-semibold tracking-tight">{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-faint">{sub}</div>}
+    <div className="rounded-2xl border border-line bg-surface p-4">
+      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
+        {title}
+      </div>
+      <div className="mt-1.5 font-display text-2xl font-semibold tracking-[-0.03em] tabular-nums">
+        {value}
+      </div>
+      {sub && <div className="mt-0.5 text-[11px] text-faint">{sub}</div>}
     </div>
   );
 }
 
-export function SimpleBar({ data }: { data: { date: string; value: number }[] }) {
+export function SimpleBar({
+  data,
+}: {
+  data: { date: string; value: number }[];
+}) {
   const max = Math.max(1, ...data.map((d) => d.value));
   return (
     <div className="flex h-24 items-end gap-[2px]">
       {data.map((d) => (
-        <div key={d.date} className="flex-1">
+        <div key={d.date} className="flex h-full flex-1 items-end">
           <div
-            className="w-full rounded-t bg-accent/70"
-            style={{ height: `${(d.value / max) * 100}%` }}
+            className="w-full rounded-t bg-accent/60 transition-colors hover:bg-accent"
+            style={{ height: `${Math.max(2, (d.value / max) * 100)}%` }}
             title={`${d.date}: ${d.value}`}
           />
         </div>

@@ -145,7 +145,7 @@ export function ExportMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         title={empty ? "Add a note before exporting" : "Export this graph"}
-        className="flex items-center gap-1.5 rounded-lg border border-line bg-background/80 px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex items-center gap-1.5 rounded-xl border border-line bg-background/80 px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-line-bright hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
       >
         <DownloadSimple size={12} />
         Export
@@ -156,7 +156,7 @@ export function ExportMenu() {
         <div
           role="menu"
           aria-label="Export format"
-          className="absolute right-0 top-full z-30 mt-2 w-64 overflow-hidden rounded-xl border border-line bg-surface shadow-[0_16px_60px_rgba(0,0,0,0.5)]"
+          className="absolute right-0 top-full z-30 mt-2 w-64 overflow-hidden rounded-2xl border border-line bg-surface shadow-float"
         >
           <div className="p-1">
             {FORMATS.map((format) => (
@@ -164,7 +164,7 @@ export function ExportMenu() {
                 key={format.id}
                 role="menuitem"
                 onClick={() => handle(format.id)}
-                className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+                className="flex w-full items-start gap-2 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
               >
                 <format.icon
                   size={14}

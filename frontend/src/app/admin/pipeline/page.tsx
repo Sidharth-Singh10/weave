@@ -61,7 +61,7 @@ export default function PipelinePage() {
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-4">
-        <h1 className="text-lg font-semibold tracking-tight">Pipeline</h1>
+        <h1 className="font-display text-xl font-semibold tracking-[-0.03em]">Pipeline</h1>
         <p className="mt-1 text-sm text-muted">
           Observe the <span className="font-mono text-xs">POST /api/graph/ingest</span> flow,
           observe-only: nothing is blocked or mutated. Rate-limit / quota / concurrency checks run
@@ -71,7 +71,7 @@ export default function PipelinePage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-3">
-          <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="rounded-2xl border border-line bg-surface p-4">
             <label className="mb-1.5 block text-xs font-medium text-faint" htmlFor="pipeline-note">
               New note
             </label>
@@ -80,11 +80,11 @@ export default function PipelinePage() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={4}
-              className="w-full resize-y rounded-lg border border-line bg-background p-3 text-sm text-foreground outline-none focus:border-accent"
+              className="w-full resize-y rounded-xl border border-line bg-background p-3 text-sm text-foreground outline-none focus:border-accent"
             />
           </div>
 
-          <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="rounded-2xl border border-line bg-surface p-4">
             <label className="mb-1.5 block text-xs font-medium text-faint" htmlFor="pipeline-graph">
               Existing graph sent to the LLM
             </label>
@@ -94,7 +94,7 @@ export default function PipelinePage() {
               onChange={(e) => setGraphJson(e.target.value)}
               rows={6}
               spellCheck={false}
-              className="w-full resize-y rounded-lg border border-line bg-background p-3 font-mono text-xs text-foreground outline-none focus:border-accent"
+              className="w-full resize-y rounded-xl border border-line bg-background p-3 font-mono text-xs text-foreground outline-none focus:border-accent"
             />
             <p className="mt-1.5 text-xs text-faint">
               JSON shape: <span className="font-mono">{"{ nodes: {label, kind}[], edges: {source_label, target_label, relation}[] }"}</span>
@@ -104,13 +104,13 @@ export default function PipelinePage() {
           <button
             onClick={run}
             disabled={loading}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-bright disabled:opacity-50"
           >
             {loading ? "Running…" : "Run pipeline"}
           </button>
 
           {error && (
-            <div className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">
+            <div className="rounded-xl border border-line bg-surface px-4 py-3 text-sm text-muted">
               {error}
             </div>
           )}
@@ -163,7 +163,7 @@ function StageRow({ stage, index }: { stage: PipelineStage; index: number }) {
     <li className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-zinc-700"
+        className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-bright"
       >
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line text-xs text-faint">
           {index + 1}

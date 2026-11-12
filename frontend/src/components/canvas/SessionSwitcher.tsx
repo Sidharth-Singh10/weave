@@ -69,7 +69,7 @@ export function SessionSwitcher() {
         aria-label="Switch session"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex max-w-44 items-center gap-1.5 rounded-lg border border-line bg-background/80 px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
+        className="flex max-w-44 items-center gap-1.5 rounded-xl border border-line bg-background/80 px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-line-bright hover:text-foreground"
       >
         <span className="truncate">{active?.name ?? "Untitled"}</span>
         <CaretDown size={10} weight="bold" className="shrink-0" />
@@ -78,7 +78,7 @@ export function SessionSwitcher() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-30 mt-2 w-60 overflow-hidden rounded-xl border border-line bg-surface shadow-[0_16px_60px_rgba(0,0,0,0.5)]"
+          className="absolute right-0 top-full z-30 mt-2 w-60 overflow-hidden rounded-2xl border border-line bg-surface shadow-float"
         >
           <div className="max-h-72 overflow-y-auto p-1">
             {sorted.length === 0 && (
@@ -92,7 +92,7 @@ export function SessionSwitcher() {
                   role="menuitem"
                   onClick={() => switchSession(s.id)}
                   className={[
-                    "group flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors",
+                    "group flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1.5 text-xs transition-colors",
                     isActive
                       ? "bg-accent/15 text-accent"
                       : "text-muted hover:bg-surface-2 hover:text-foreground",

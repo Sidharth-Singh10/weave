@@ -60,7 +60,7 @@ export default function PoliciesPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="mb-4 text-lg font-semibold tracking-tight">Policies</h1>
+      <h1 className="mb-4 font-display text-xl font-semibold tracking-[-0.03em]">Policies</h1>
       {notice && (
         <div className="mb-3 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-muted">
           {notice}

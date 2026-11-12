@@ -16,22 +16,22 @@ import { useGraphStore } from "./store";
 
 /** Muted hues for community-colored edges, on the dark canvas. */
 export const COMMUNITY_COLORS = [
-  "#8b5cf6", // violet
-  "#14b8a6", // teal
-  "#f59e0b", // amber
-  "#ec4899", // pink
-  "#3b82f6", // blue
-  "#22c55e", // green
+  "#34d399", // emerald
+  "#2dd4bf", // teal
+  "#f5b14c", // amber
+  "#fb7185", // rose
+  "#7dd3fc", // sky
+  "#a3e635", // lime
 ];
 
 /** Topic colors keyed by node kind, used by the Topic view projection. */
 export const TOPIC_COLORS: Record<string, string> = {
-  person: "#8b5cf6",
-  place: "#14b8a6",
-  org: "#f59e0b",
-  event: "#ec4899",
-  object: "#3b82f6",
-  concept: "#22c55e",
+  person: "#7dd3fc",
+  place: "#34d399",
+  org: "#f5b14c",
+  event: "#fb7185",
+  object: "#2dd4bf",
+  concept: "#a3e635",
 };
 
 function topicColor(kind: string): string {

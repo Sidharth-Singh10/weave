@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { X } from "@phosphor-icons/react";
 
 import { useGraphStore } from "@/lib/store";
 import { TOPIC_COLORS } from "@/lib/graph-projection";
@@ -10,7 +11,7 @@ import type { EdgeConfidence, SourceRef } from "@/lib/graph-types";
 const CONFIDENCE_COLORS: Record<EdgeConfidence, string> = {
   EXTRACTED: "var(--accent)",
   INFERRED: "var(--muted)",
-  AMBIGUOUS: "#f59e0b",
+  AMBIGUOUS: "var(--warning)",
 };
 
 /** Shown for edges persisted before confidence was recorded. */
@@ -87,18 +88,19 @@ export function SourceInspector() {
   const hidden = connections.length - shown.length;
 
   return (
-    <div className="pointer-events-auto absolute right-3 top-14 z-10 w-72 rounded-xl border border-line bg-surface p-3 shadow-lg">
+    <div className="pointer-events-auto absolute right-3 top-16 z-10 w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-line bg-surface p-3 shadow-float">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">{node.label}</p>
           <p className="text-[11px] text-faint">{node.kind}</p>
         </div>
         <button
+          type="button"
           onClick={() => selectNode(undefined)}
           className="shrink-0 text-faint transition-colors hover:text-foreground"
           aria-label="Close inspector"
         >
-          ✕
+          <X size={14} />
         </button>
       </div>
 

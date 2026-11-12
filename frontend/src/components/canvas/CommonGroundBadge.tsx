@@ -16,8 +16,10 @@ export function CommonGroundBadge() {
       <button
         type="button"
         title={`Common Ground document: ${docId}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="pointer-events-auto rounded-full border border-line bg-background/60 px-2 py-0.5 font-mono text-[10px] text-faint hover:text-foreground"
+        className="pointer-events-auto rounded-full border border-line bg-background/60 px-2 py-0.5 font-mono text-[10px] text-faint transition-colors hover:border-line-bright hover:text-foreground"
       >
         CG {docId.slice(-8)}
       </button>

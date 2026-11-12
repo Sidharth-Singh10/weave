@@ -25,6 +25,7 @@ import { InputDock } from "./InputDock";
 import { CanvasHeader } from "./CanvasHeader";
 import { InsightsPanel } from "./InsightsPanel";
 import { SourceInspector } from "./SourceInspector";
+import { Logo } from "@/components/ui/Logo";
 
 const nodeTypes = { weave: WeaveNode };
 
@@ -75,21 +76,21 @@ function Flow() {
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
-          labelStyle: { fill: "#a1a1aa", fontSize: 11 },
-          labelBgStyle: { fill: "#101013", fillOpacity: 0.9 },
-          style: { stroke: "#3f3f46", strokeWidth: 1.5 },
+          labelStyle: { fill: "#a8b0ba", fontSize: 11 },
+          labelBgStyle: { fill: "#0e1013", fillOpacity: 0.92 },
+          style: { stroke: "#363c45", strokeWidth: 1.4 },
         }}
       >
         <Background
           variant={BackgroundVariant.Dots}
           gap={28}
           size={1}
-          color="#27272a"
+          color="#24282e"
         />
         <Controls
           position="bottom-right"
           showInteractive={false}
-          className="!border-line !bg-surface [&_button]:!border-line [&_button]:!bg-surface [&_button]:!fill-muted"
+          className="!rounded-xl !border-line !bg-surface !shadow-float [&_button]:!border-line [&_button]:!bg-surface [&_button]:!fill-muted"
         >
           <ControlButton
             title="Re-layout graph"
@@ -102,10 +103,15 @@ function Flow() {
       </ReactFlow>
 
       {renderNodes.length === 0 && (
-        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+        <div className="pointer-events-none absolute inset-0 grid place-items-center px-6">
           <div className="text-center">
-            <p className="text-lg text-muted">Your canvas is empty.</p>
-            <p className="mt-1 text-sm text-faint">
+            <div className="mb-4 flex justify-center opacity-60">
+              <Logo size={34} wordmark={false} />
+            </div>
+            <p className="font-display text-xl font-semibold tracking-[-0.03em] text-muted">
+              Your canvas is empty.
+            </p>
+            <p className="mt-1.5 text-sm text-faint">
               Type one idea below. Weave starts drawing.
             </p>
           </div>

@@ -13,7 +13,7 @@ export default function AnalyticsPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold tracking-tight">Analytics</h1>
+        <h1 className="font-display text-xl font-semibold tracking-[-0.03em]">Analytics</h1>
         <div className="flex gap-1 rounded-lg border border-line bg-surface p-0.5">
           {RANGES.map((r) => (
             <button

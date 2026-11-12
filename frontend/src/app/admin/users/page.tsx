@@ -64,7 +64,7 @@ export default function UsersPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="mb-4 text-lg font-semibold tracking-tight">Users</h1>
+      <h1 className="mb-4 font-display text-xl font-semibold tracking-[-0.03em]">Users</h1>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input

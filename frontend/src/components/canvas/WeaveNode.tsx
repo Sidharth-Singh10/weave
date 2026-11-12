@@ -26,7 +26,7 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
           opacity: { duration: 1.8, repeat: Infinity, ease: "easeInOut" },
           scale: { type: "spring", stiffness: 300, damping: 24 },
         }}
-        className="rounded-xl border border-line/50 bg-surface/60 px-4 py-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.25)]"
+        className="rounded-xl border border-line/50 bg-surface/60 px-4 py-2.5 shadow-float"
       >
         <Handle type="target" position={Position.Top} className="!opacity-0" />
         <Handle type="source" position={Position.Bottom} className="!opacity-0" />
@@ -54,8 +54,8 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
         setEditing(true);
       }}
       className={[
-        "group relative rounded-xl border bg-surface px-4 py-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.35)]",
-        selected ? "border-accent" : "border-line hover:border-faint",
+        "group relative rounded-xl border bg-surface px-4 py-2.5 shadow-[0_10px_30px_-16px_rgba(0,0,0,0.9)]",
+        selected ? "border-accent" : "border-line hover:border-line-bright",
         data.fresh ? "ring-2 ring-accent/60" : "",
       ].join(" ")}
       style={
@@ -66,8 +66,8 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
     >
       {isEntryPoint && (
         <span
-          title={`${data.degree} connected concepts — click to focus`}
-          className="absolute -right-1.5 -top-1.5 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-bold leading-none text-accent-ink shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+          title={`${data.degree} connected concepts. Click to focus.`}
+          className="absolute -right-1.5 -top-1.5 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-bold leading-none text-accent-ink shadow-float"
         >
           +{data.degree}
         </span>
@@ -85,7 +85,7 @@ export function WeaveNode({ id, data, selected }: NodeProps<WeaveFlowNode>) {
             if (e.key === "Enter") commit();
             if (e.key === "Escape") setEditing(false);
           }}
-          className="w-36 rounded-md border border-accent bg-background px-2 py-0.5 text-sm text-foreground outline-none"
+          className="w-36 rounded-lg border border-accent bg-background px-2 py-0.5 text-sm text-foreground outline-none"
         />
       ) : (
         <div className="flex items-baseline gap-2">
