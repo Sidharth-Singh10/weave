@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { getCommonGroundDocId } from "@/lib/common-ground";
+import { commonGroundEnabled, getCommonGroundDocId } from "@/lib/common-ground";
 import { CommonGroundPanel } from "./CommonGroundPanel";
 
 const subscribe = () => () => {};
@@ -10,7 +10,7 @@ const subscribe = () => () => {};
 export function CommonGroundBadge() {
   const [open, setOpen] = useState(false);
   const docId = useSyncExternalStore(subscribe, getCommonGroundDocId, () => "");
-  if (!docId) return null;
+  if (!commonGroundEnabled || !docId) return null;
   return (
     <>
       <button

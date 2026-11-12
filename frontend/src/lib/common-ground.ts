@@ -17,6 +17,15 @@ import type {
  */
 
 const DOC_KEY = "weave.commonGroundDocId";
+
+/**
+ * Common Ground is an optional integration: without its journal service the
+ * canvas would render a badge that opens a panel backed by nothing. A deployment
+ * that does not run the journal sets `NEXT_PUBLIC_COMMON_GROUND=off`.
+ */
+export const commonGroundEnabled =
+  process.env.NEXT_PUBLIC_COMMON_GROUND !== "off";
+
 export const COMMON_GROUND_BASE = (
   process.env.NEXT_PUBLIC_COMMON_GROUND_URL ?? "/common-ground"
 ).replace(/\/+$/, "");

@@ -18,7 +18,7 @@ import { useGraphStore } from "@/lib/store";
 import { useRenderGraph } from "@/lib/graph-projection";
 import { useSemanticZoom } from "@/lib/useSemanticZoom";
 import { useSessionPersistence } from "@/lib/useSessionPersistence";
-import { startCommonGroundBridge } from "@/lib/common-ground";
+import { commonGroundEnabled, startCommonGroundBridge } from "@/lib/common-ground";
 import type { WeaveFlowNode } from "@/lib/graph-types";
 import { WeaveNode } from "./WeaveNode";
 import { InputDock } from "./InputDock";
@@ -122,7 +122,7 @@ function Flow() {
 
 export function CanvasApp() {
   useSessionPersistence();
-  useEffect(() => startCommonGroundBridge(), []);
+  useEffect(() => (commonGroundEnabled ? startCommonGroundBridge() : undefined), []);
   return (
     <ReactFlowProvider>
       <Flow />
